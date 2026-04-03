@@ -36,7 +36,7 @@ export function HistoryTable() {
 
   if (loading) {
     return (
-      <p className="py-12 text-center text-zinc-500" role="status">
+      <p className="py-12 text-center text-[13px]" style={{ color: "var(--vok-muted)" }}>
         Loading history…
       </p>
     );
@@ -44,12 +44,19 @@ export function HistoryTable() {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
+      <div
+        className="rounded-[var(--vok-radius)] border p-4"
+        style={{
+          borderColor: "rgba(255,107,107,0.3)",
+          background: "rgba(255,107,107,0.06)",
+          color: "var(--vok-red)",
+        }}
+      >
         {error}
         <button
           type="button"
           onClick={() => void load()}
-          className="mt-3 block text-sm font-medium underline hover:text-red-900"
+          className="mt-3 block text-sm font-medium underline hover:opacity-90"
         >
           Retry
         </button>
@@ -59,46 +66,54 @@ export function HistoryTable() {
 
   if (rows.length === 0) {
     return (
-      <p className="text-center text-zinc-500 py-12">
+      <p className="py-12 text-center text-[13px]" style={{ color: "var(--vok-muted)" }}>
         No history yet. Complete a download to see entries here.
       </p>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <table className="w-full min-w-[640px] text-left text-sm text-zinc-700">
-        <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
-          <tr>
-            <th className="px-4 py-3">Title</th>
-            <th className="px-4 py-3">Source</th>
-            <th className="px-4 py-3">Artifact</th>
-            <th className="px-4 py-3 w-28" />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-200">
-          {rows.map((row) => (
-            <tr key={row.id} className="hover:bg-zinc-50">
-              <td className="px-4 py-3 font-medium text-zinc-900">{row.title}</td>
-              <td className="px-4 py-3 max-w-[220px] truncate" title={row.source_url}>
-                {row.source_url}
-              </td>
-              <td className="px-4 py-3 max-w-[220px] truncate font-mono text-xs" title={row.artifact_uri}>
-                {row.artifact_uri}
-              </td>
-              <td className="px-4 py-3">
-                <button
-                  type="button"
-                  onClick={() => void remove(row.id)}
-                  className="text-red-700 hover:text-red-800 text-xs font-semibold"
-                >
-                  Remove
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="flex flex-col gap-2">
+      {rows.map((row) => (
+        <li
+          key={row.id}
+          className="flex flex-col gap-2 rounded-[var(--vok-radius)] border p-4 sm:flex-row sm:items-center sm:justify-between"
+          style={{
+            background: "var(--vok-surface2)",
+            borderColor: "var(--vok-border)",
+          }}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{row.title}</div>
+            <div
+              className="mt-1 truncate font-mono text-[11px]"
+              style={{ color: "var(--vok-muted)" }}
+              title={row.source_url}
+            >
+              {row.source_url}
+            </div>
+            <div
+              className="mt-1 truncate font-mono text-[11px]"
+              style={{ color: "var(--vok-muted2)" }}
+              title={row.artifact_uri}
+            >
+              {row.artifact_uri}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void remove(row.id)}
+            className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:opacity-90"
+            style={{
+              borderColor: "rgba(255,107,107,0.25)",
+              color: "var(--vok-red)",
+              background: "rgba(255,107,107,0.08)",
+            }}
+          >
+            Remove
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

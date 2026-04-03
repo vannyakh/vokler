@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-:root {
+/* Dark (default) */
+:root,
+html[data-theme="dark"] {
   --vok-bg: #0a0a0f;
   --vok-surface: #111118;
   --vok-surface2: #18181f;
@@ -20,6 +22,36 @@
   --vok-red: #ff6b6b;
   --vok-radius: 12px;
   --vok-radius-lg: 18px;
+  --vok-row-hover: rgba(255, 255, 255, 0.04);
+  --vok-status-bg: rgba(255, 255, 255, 0.05);
+  --vok-gradient-hero-from: var(--vok-accent);
+  --vok-gradient-hero-to: var(--vok-accent3);
+  --vok-btn-gradient-end: #8b5cf6;
+}
+
+html[data-theme="light"] {
+  --vok-bg: #f4f4f9;
+  --vok-surface: #ffffff;
+  --vok-surface2: #ececf4;
+  --vok-surface3: #e0e0ec;
+  --vok-border: rgba(0, 0, 0, 0.08);
+  --vok-border2: rgba(0, 0, 0, 0.14);
+  --vok-accent: #5b52e5;
+  --vok-accent2: #e8556f;
+  --vok-accent3: #2ec4b6;
+  --vok-text: #12121a;
+  --vok-muted: rgba(18, 18, 26, 0.58);
+  --vok-muted2: rgba(18, 18, 26, 0.32);
+  --vok-pill: rgba(91, 82, 229, 0.12);
+  --vok-pill-border: rgba(91, 82, 229, 0.28);
+  --vok-green: #0d9f5f;
+  --vok-yellow: #c9a227;
+  --vok-red: #d94c4c;
+  --vok-row-hover: rgba(0, 0, 0, 0.04);
+  --vok-status-bg: rgba(0, 0, 0, 0.06);
+  --vok-gradient-hero-from: var(--vok-accent);
+  --vok-gradient-hero-to: var(--vok-accent3);
+  --vok-btn-gradient-end: #7c3aed;
 }
 
 @theme inline {
@@ -27,7 +59,11 @@
   --font-mono: var(--font-space-mono), ui-monospace, monospace;
 }
 
-html {
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
   color-scheme: dark;
 }
 

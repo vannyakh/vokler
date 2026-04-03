@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
-    database_url: str = "postgresql+asyncpg://vokler:vokler@localhost:5432/vokler"
+    database_url: str = "postgresql+asyncpg://localhost:1511@localhost:5432/vokler"
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

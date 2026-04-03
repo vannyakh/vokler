@@ -1,16 +1,5 @@
 const DEFAULT_ORIGIN = "http://127.0.0.1:8000";
 
-export const FORMAT_OPTIONS = [
-  { value: "original", label: "Best (original)" },
-  { value: "mp4_1080p", label: "MP4 · 1080p" },
-  { value: "mp4_720p", label: "MP4 · 720p" },
-  { value: "mp4_480p", label: "MP4 · 480p" },
-  { value: "mp3_320", label: "MP3 · 320 kbps" },
-  { value: "mp3_192", label: "MP3 · 192 kbps" },
-] as const;
-
-export type FormatValue = (typeof FORMAT_OPTIONS)[number]["value"];
-
 function publicBase(): string {
   return (process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_ORIGIN).replace(/\/$/, "");
 }
