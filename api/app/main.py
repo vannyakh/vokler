@@ -20,13 +20,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# localhost vs 127.0.0.1 and varying dev ports are different browser origins — regex covers them.
+_dev_origin_re = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+_cors_kw: dict = {
+    "allow_origins": settings.cors_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.app_env == "development" and settings.cors_allow_localhost_regex:
+    _cors_kw["allow_origin_regex"] = _dev_origin_re
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(download.router, prefix="", tags=["download"])

@@ -21,6 +21,19 @@ services:
     ports:
       - "6379:6379"
 
+  # One-shot: creates tables (Alembic). API/worker wait until this exits successfully.
+  migrate:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "uv sync && uv run alembic upgrade head"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vokler:vokler@db:5432/vokler
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     working_dir: /app
@@ -39,6 +52,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   worker:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
@@ -55,6 +70,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

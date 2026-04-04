@@ -66,14 +66,42 @@ export async function previewMedia(url: string): Promise<PreviewResponseDto> {
   });
 }
 
-export type HistoryEntryDto = {
-  id: string;
-  job_id: string | null;
-  title: string;
-  source_url: string;
-  artifact_uri: string;
-  created_at: string;
-};
+/** Fetch finished job file and trigger the browser Save / Downloads UI. */
+export async function downloadJobFileToBrowser(
+  jobId: string,
+  fallbackFilename: string,
+): Promise<void> {
+  const headers = new Headers();
+  const token = accessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(apiUrl(`/jobs/${jobId}/file`), { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `${res.status} ${res.statusText}`);
+  }
+  const cd = res.headers.get("Content-Disposition");
+  let filename = fallbackFilename.replace(/[^\w.\-()\s[\]]/g, "_").trim() || "download.bin";
+  const m = cd?.match(/filename\*?=(?:UTF-8'')?["']?([^";\n]+)["']?/i);
+  if (m?.[1]) {
+    try {
+      filename = decodeURIComponent(m[1].trim());
+    } catch {
+      filename = m[1].trim();
+    }
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export async function apiFetch<T>(
   path: string,

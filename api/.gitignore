@@ -1,1 +1,15 @@
 __pycache__
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.flv
+*.wmv
+*.webm
+*.mp3
+*.wav
+*.ogg
+*.m4a
+*.m4v
+*.m4b
+data/downloads/*

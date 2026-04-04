@@ -21,6 +21,8 @@ type Props = {
   onDownload: () => void;
   downloading: boolean;
   downloadLabel?: string;
+  /** 0–100 while server is preparing the file (single-download flow). */
+  downloadProgress?: number | null;
 };
 
 const OUTPUT_EXTS = ["mp4", "webm", "mov", "mp3", "aac", "flac"] as const;
@@ -36,6 +38,7 @@ export function VideoInfoPanel({
   onDownload,
   downloading,
   downloadLabel,
+  downloadProgress,
 }: Props) {
   const thumb = preview.thumbnail;
   const { formats, recommended_format } = preview;
@@ -390,18 +393,42 @@ export function VideoInfoPanel({
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={downloading || !selectedFormatId}
-          className="rounded-[var(--vok-radius)] px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-          style={{
-            background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)",
-          }}
-        >
-          {downloading ? "Downloading…" : (downloadLabel ?? "Download")}
-        </button>
+      <div className="flex flex-col gap-2">
+        {downloading && downloadProgress != null && downloadProgress >= 0 ? (
+          <div
+            className="h-1.5 w-full overflow-hidden rounded-full"
+            style={{ background: "var(--vok-surface3)" }}
+            role="progressbar"
+            aria-valuenow={Math.round(downloadProgress)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className="h-full rounded-full transition-[width] duration-300"
+              style={{
+                width: `${Math.min(100, Math.max(0, downloadProgress))}%`,
+                background: "linear-gradient(90deg, var(--vok-accent), #8b5cf6)",
+              }}
+            />
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={downloading || !selectedFormatId}
+            className="rounded-[var(--vok-radius)] px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+            style={{
+              background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)",
+            }}
+          >
+            {downloading
+              ? downloadProgress != null
+                ? `Saving… ${Math.round(Math.min(100, Math.max(0, downloadProgress)))}%`
+                : "Downloading…"
+              : (downloadLabel ?? "Download")}
+          </button>
+        </div>
       </div>
     </div>
   );

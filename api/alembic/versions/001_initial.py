@@ -19,13 +19,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # create_type=False: we call .create() below; otherwise create_table would emit
+    # CREATE TYPE a second time and Postgres raises "type job_status already exists".
     job_status = postgresql.ENUM(
         "pending",
         "running",
         "completed",
         "failed",
         name="job_status",
-        create_type=True,
+        create_type=False,
     )
     job_status.create(op.get_bind(), checkfirst=True)
 

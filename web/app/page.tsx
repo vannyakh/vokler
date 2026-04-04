@@ -2,12 +2,12 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { HistoryTable } from "@/components/HistoryTable";
 import { JobQueueCard } from "@/components/JobQueueCard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { VideoInfoPanel } from "@/components/VideoInfoPanel";
 import {
   apiFetch,
+  downloadJobFileToBrowser,
   type JobDto,
   type PreviewResponseDto,
   previewMedia,
@@ -23,6 +23,14 @@ function parseUrls(text: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+function safeDownloadFilename(title: string | null | undefined): string {
+  const t = (title ?? "video")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .trim()
+    .slice(0, 120);
+  return /\.(mp4|webm|mkv|m4a|mp3|opus|flac)$/i.test(t) ? t : `${t || "video"}.mp4`;
 }
 
 type DownloadMode = "single" | "multi" | "playlist" | "profile";
@@ -126,6 +134,8 @@ export default function HomePage() {
   const [selectedFormatId, setSelectedFormatId] = useState("");
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [sessionJobs, setSessionJobs] = useState<JobDto[]>([]);
+  /** Single-tab: one in-flight job; no queue UI — file goes to browser when done. */
+  const [singleJob, setSingleJob] = useState<JobDto | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -134,19 +144,18 @@ export default function HomePage() {
     (data: { job_id?: string; progress?: number; status?: string }) => {
       const jid = data.job_id ?? activeJobId;
       if (!jid) return;
-      setSessionJobs((prev) =>
-        prev.map((j) =>
-          j.id === jid
-            ? {
-                ...j,
-                progress: data.progress ?? j.progress,
-                status: data.status ?? j.status,
-              }
-            : j,
-        ),
-      );
+      const patch = (j: JobDto): JobDto => ({
+        ...j,
+        progress: data.progress ?? j.progress,
+        status: (data.status ?? j.status) as JobDto["status"],
+      });
+      if (mode !== "multi") {
+        setSingleJob((prev) => (prev && prev.id === jid ? patch(prev) : prev));
+      } else {
+        setSessionJobs((prev) => prev.map((j) => (j.id === jid ? patch(j) : j)));
+      }
     },
-    [activeJobId],
+    [activeJobId, mode],
   );
 
   useJobProgressWebSocket(
@@ -167,6 +176,7 @@ export default function HomePage() {
     setFormError(null);
     setPreview(null);
     setSessionJobs([]);
+    setSingleJob(null);
     setActiveJobId(null);
     setLoadingInfo(true);
     try {
@@ -197,9 +207,43 @@ export default function HomePage() {
 
   const runDownload = useCallback(async () => {
     if (!selectedFormatId) return;
+    setFormError(null);
+
+    if (mode !== "multi") {
+      const one = url.trim();
+      if (!one) return;
+      setDownloading(true);
+      setSingleJob(null);
+      try {
+        const created = await apiFetch<JobDto>("/download", {
+          method: "POST",
+          body: JSON.stringify({ url: one, format: selectedFormatId }),
+        });
+        setSingleJob(created);
+        setActiveJobId(created.id);
+        let last = created;
+        while (!["completed", "failed"].includes(last.status)) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          last = await apiFetch<JobDto>(`/jobs/${created.id}`);
+          setSingleJob(last);
+        }
+        if (last.status === "failed") {
+          setFormError(last.error_message ?? "Download failed");
+          return;
+        }
+        await downloadJobFileToBrowser(created.id, safeDownloadFilename(preview?.title));
+      } catch (e) {
+        setFormError(e instanceof Error ? e.message : "Download failed");
+      } finally {
+        setDownloading(false);
+        setActiveJobId(null);
+        setSingleJob(null);
+      }
+      return;
+    }
+
     const targets = mode === "multi" ? parseUrls(url) : [url.trim()].filter(Boolean);
     if (targets.length === 0) return;
-    setFormError(null);
     setDownloading(true);
     try {
       for (const u of targets) {
@@ -220,7 +264,7 @@ export default function HomePage() {
       setDownloading(false);
       setActiveJobId(null);
     }
-  }, [mode, url, selectedFormatId, pollUntilTerminal]);
+  }, [mode, url, selectedFormatId, pollUntilTerminal, preview?.title]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -229,6 +273,7 @@ export default function HomePage() {
         setUrl(mode === "multi" ? text : text.trim());
         setPreview(null);
         setSessionJobs([]);
+        setSingleJob(null);
         setActiveJobId(null);
         setFormError(null);
       }
@@ -322,6 +367,10 @@ export default function HomePage() {
             onClick={() => {
               setMode(key);
               setFormError(null);
+              setPreview(null);
+              setSessionJobs([]);
+              setSingleJob(null);
+              setActiveJobId(null);
             }}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-[9px] px-3 py-2 text-[13px] font-medium transition"
             style={
@@ -338,112 +387,145 @@ export default function HomePage() {
         ))}
       </div>
 
-      <div
-        className="mb-4 rounded-[var(--vok-radius-lg)] border p-6"
-        style={{ background: "var(--vok-surface)", borderColor: "var(--vok-border)" }}
-      >
+      {!preview ? (
         <div
-          className="mb-3 text-[11px] font-semibold uppercase tracking-wider"
-          style={{ color: "var(--vok-muted)" }}
+          className="mb-4 rounded-[var(--vok-radius-lg)] border p-6"
+          style={{ background: "var(--vok-surface)", borderColor: "var(--vok-border)" }}
         >
-          {modeLabel(mode)}
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-          <div className="relative min-w-0 flex-1">
-            {mode === "multi" ? (
-              <textarea
-                placeholder={modePlaceholder(mode)}
-                value={url}
-                rows={5}
-                onChange={(e) => {
-                  setUrl(e.target.value);
-                  setPreview(null);
-                  setSessionJobs([]);
-                  setActiveJobId(null);
-                  setFormError(null);
-                }}
+          <div
+            className="mb-3 text-[11px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--vok-muted)" }}
+          >
+            {modeLabel(mode)}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <div className="relative min-w-0 flex-1">
+              {mode === "multi" ? (
+                <textarea
+                  placeholder={modePlaceholder(mode)}
+                  value={url}
+                  rows={5}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setPreview(null);
+                    setSessionJobs([]);
+                    setSingleJob(null);
+                    setActiveJobId(null);
+                    setFormError(null);
+                  }}
+                  disabled={downloading || loadingInfo}
+                  className="min-h-[120px] w-full resize-y rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] leading-relaxed outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
+                  style={{
+                    background: "var(--vok-surface2)",
+                    border: "1px solid var(--vok-border2)",
+                    color: "var(--vok-text)",
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = "var(--vok-accent)";
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = "var(--vok-border2)";
+                  }}
+                />
+              ) : (
+                <input
+                  type="url"
+                  placeholder={modePlaceholder(mode)}
+                  value={url}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setPreview(null);
+                    setSessionJobs([]);
+                    setSingleJob(null);
+                    setActiveJobId(null);
+                    setFormError(null);
+                  }}
+                  disabled={downloading || loadingInfo}
+                  className="min-h-[46px] w-full rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
+                  style={{
+                    background: "var(--vok-surface2)",
+                    border: "1px solid var(--vok-border2)",
+                    color: "var(--vok-text)",
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = "var(--vok-accent)";
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = "var(--vok-border2)";
+                  }}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => void pasteFromClipboard()}
                 disabled={downloading || loadingInfo}
-                className="min-h-[120px] w-full resize-y rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] leading-relaxed outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
+                className={
+                  mode === "multi"
+                    ? "absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-lg transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
+                    : "absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
+                }
                 style={{
-                  background: "var(--vok-surface2)",
-                  border: "1px solid var(--vok-border2)",
-                  color: "var(--vok-text)",
+                  color: "var(--vok-muted)",
+                  background: "var(--vok-surface3)",
+                  border: "1px solid var(--vok-border)",
                 }}
-                onFocus={(e) => {
-                  e.target.style.borderColor = "var(--vok-accent)";
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = "var(--vok-border2)";
-                }}
-              />
-            ) : (
-              <input
-                type="url"
-                placeholder={modePlaceholder(mode)}
-                value={url}
-                onChange={(e) => {
-                  setUrl(e.target.value);
-                  setPreview(null);
-                  setSessionJobs([]);
-                  setActiveJobId(null);
-                  setFormError(null);
-                }}
-                disabled={downloading || loadingInfo}
-                className="min-h-[46px] w-full rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
-                style={{
-                  background: "var(--vok-surface2)",
-                  border: "1px solid var(--vok-border2)",
-                  color: "var(--vok-text)",
-                }}
-                onFocus={(e) => {
-                  e.target.style.borderColor = "var(--vok-accent)";
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = "var(--vok-border2)";
-                }}
-              />
-            )}
+                aria-label="Paste from clipboard"
+                title="Paste from clipboard"
+              >
+                <ClipboardIcon className="h-[18px] w-[18px]" />
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => void pasteFromClipboard()}
-              disabled={downloading || loadingInfo}
-              className={
-                mode === "multi"
-                  ? "absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-lg transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
-                  : "absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
+              onClick={() => void fetchInfo()}
+              disabled={
+                downloading ||
+                loadingInfo ||
+                (mode === "multi" ? parseUrls(url).length === 0 : !url.trim())
               }
-              style={{
-                color: "var(--vok-muted)",
-                background: "var(--vok-surface3)",
-                border: "1px solid var(--vok-border)",
-              }}
-              aria-label="Paste from clipboard"
-              title="Paste from clipboard"
+              className="min-h-[46px] shrink-0 self-start rounded-[var(--vok-radius)] px-5 text-[14px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50 sm:px-6"
+              style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
             >
-              <ClipboardIcon className="h-[18px] w-[18px]" />
+              {loadingInfo ? "Fetching…" : "Fetch"}
             </button>
           </div>
+          {mode === "multi" ? (
+            <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
+              One URL per line. Fetch previews the first link; Download runs each line in order with
+              the selected format.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          className="mb-4 flex flex-col gap-2 rounded-[var(--vok-radius-lg)] border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          style={{ background: "var(--vok-surface2)", borderColor: "var(--vok-border)" }}
+        >
+          <p className="min-w-0 text-[13px] leading-snug" style={{ color: "var(--vok-text)" }}>
+            <span className="font-medium" style={{ color: "var(--vok-muted)" }}>
+              Loaded
+            </span>{" "}
+            <span className="line-clamp-2 break-all">{preview.title ?? url.trim()}</span>
+          </p>
           <button
             type="button"
-            onClick={() => void fetchInfo()}
-            disabled={
-              downloading ||
-              loadingInfo ||
-              (mode === "multi" ? parseUrls(url).length === 0 : !url.trim())
-            }
-            className="min-h-[46px] shrink-0 self-start rounded-[var(--vok-radius)] px-5 text-[14px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50 sm:px-6"
-            style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
+            onClick={() => {
+              setPreview(null);
+              setFormError(null);
+              setSelectedFormatId("");
+              setSingleJob(null);
+            }}
+            className="shrink-0 rounded-[var(--vok-radius)] border px-3 py-2 text-[13px] font-medium transition hover:opacity-90"
+            style={{
+              borderColor: "var(--vok-border2)",
+              color: "var(--vok-muted)",
+              background: "var(--vok-surface3)",
+            }}
           >
-            {loadingInfo ? "Fetching…" : "Fetch"}
+            Change URL
           </button>
         </div>
-        {mode === "multi" ? (
-          <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
-            One URL per line. Fetch previews the first link; Download runs each line in order with
-            the selected format.
-          </p>
-        ) : null}
-      </div>
+      )}
 
       {formError ? (
         <p
@@ -466,6 +548,9 @@ export default function HomePage() {
             onSelectFormat={setSelectedFormatId}
             onDownload={() => void runDownload()}
             downloading={downloading}
+            downloadProgress={
+              mode !== "multi" && singleJob ? singleJob.progress : null
+            }
             downloadLabel={
               mode === "multi" && allUrls.length > 1
                 ? `Download ${allUrls.length} links`
@@ -481,7 +566,7 @@ export default function HomePage() {
         </p>
       ) : null}
 
-      {sessionJobs.length > 0 ? (
+      {mode === "multi" && sessionJobs.length > 0 ? (
         <>
           <div className="mb-6 mt-10 flex items-center gap-2.5">
             <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
@@ -545,18 +630,6 @@ export default function HomePage() {
           </div>
         </>
       ) : null}
-
-      <div className="mb-6 mt-12 flex items-center gap-2.5">
-        <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
-        <span
-          className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider"
-          style={{ color: "var(--vok-muted)" }}
-        >
-          History
-        </span>
-        <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
-      </div>
-      <HistoryTable />
     </div>
   );
 }

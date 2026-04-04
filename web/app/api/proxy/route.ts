@@ -30,7 +30,7 @@ async function proxy(request: NextRequest, method: string) {
   const forward = request.nextUrl.searchParams.get("forward");
   if (!forward || !forward.startsWith("/")) {
     return NextResponse.json(
-      { detail: 'Query "forward" is required and must start with / (e.g. /history).' },
+      { detail: 'Query "forward" is required and must start with / (e.g. /preview).' },
       { status: 400 },
     );
   }

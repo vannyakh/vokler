@@ -1,21 +1,25 @@
+import logging
+from pathlib import Path
 from uuid import UUID
 
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.deps import get_optional_user_id
-from app.models.job import DownloadJob
+from app.models.job import DownloadJob, JobStatus
 from app.schemas.job import DownloadCreate, JobPublic
 from app.schemas.preview import MediaFormatRow, PreviewRequest, PreviewResponse
 from app.services.downloader import extract_preview
 from app.services.url_parser import detect_platform
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def _enqueue_download(job_id: UUID) -> None:
@@ -61,9 +65,9 @@ async def create_download(
     await db.refresh(job)
     try:
         await _enqueue_download(job.id)
-    except (OSError, TimeoutError):
-        # Redis/worker optional when developing without the queue
-        pass
+    except Exception as e:
+        # Redis/arq can raise more than OSError; job row is already committed.
+        logger.warning("Could not enqueue job %s: %s", job.id, e)
     return JobPublic.model_validate(job)
 
 
@@ -79,3 +83,38 @@ async def get_job(
     if job.user_id is not None and requester_id != job.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return JobPublic.model_validate(job)
+
+
+@router.get("/jobs/{job_id}/file")
+async def download_job_file(
+    job_id: UUID,
+    requester_id: UUID | None = Depends(get_optional_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the finished file for browser download (same auth rules as ``get_job``)."""
+    job = await db.scalar(select(DownloadJob).where(DownloadJob.id == job_id))
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.user_id is not None and requester_id != job.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status != JobStatus.COMPLETED or not job.result_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File not ready or download failed",
+        )
+    base = Path(settings.local_storage_path).resolve()
+    try:
+        path = Path(job.result_path).resolve()
+    except OSError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    try:
+        path.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid path")
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on disk")
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type="application/octet-stream",
+    )

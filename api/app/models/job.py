@@ -4,7 +4,8 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +17,11 @@ class JobStatus(str, enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+def _job_status_values(enum_cls: type[JobStatus]) -> list[str]:
+    """Persist lowercase values to match PostgreSQL ``job_status`` (not enum member names)."""
+    return [m.value for m in enum_cls]
 
 
 class DownloadJob(Base):
@@ -36,7 +42,12 @@ class DownloadJob(Base):
     platform: Mapped[str | None] = mapped_column(String(64), nullable=True)
     download_format: Mapped[str] = mapped_column(String(512), default="original")
     status: Mapped[JobStatus] = mapped_column(
-        SAEnum(JobStatus, name="job_status"),
+        PG_ENUM(
+            JobStatus,
+            name="job_status",
+            create_type=False,
+            values_callable=_job_status_values,
+        ),
         default=JobStatus.PENDING,
     )
     progress: Mapped[float] = mapped_column(default=0.0)
