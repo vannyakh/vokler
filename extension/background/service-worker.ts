@@ -1,5 +1,20 @@
+import { sameVideoPage } from "../shared/same-video-page";
+
 const STORAGE_KEY = "voklerMediaUrls";
+const SETTINGS_KEY = "voklerPopupSettings";
 const MAX_URLS = 50;
+
+const VIDEO_PAGE_PATTERNS: RegExp[] = [
+  /youtube\.com\/watch/,
+  /youtube\.com\/shorts\//,
+  /m\.youtube\.com\/watch/,
+  /m\.youtube\.com\/shorts\//,
+  /instagram\.com\/(reel|p)\//,
+  /tiktok\.com\/@.+\/video/,
+  /(twitter|x)\.com\/.+\/status\//,
+  /facebook\.com\/.+\/videos\//,
+  /vimeo\.com\/\d+/,
+];
 
 export type MediaHit = {
   url: string;
@@ -7,7 +22,41 @@ export type MediaHit = {
   mimeType: string | undefined;
   timeStamp: number;
   initiator: string | undefined;
+  /** Tab URL when the request completed (used to match SPA navigations). */
+  pageUrl?: string;
 };
+
+function isVideoPageUrl(url: string): boolean {
+  return VIDEO_PAGE_PATTERNS.some((p) => p.test(url));
+}
+
+function sanitizeFilename(name: string): string {
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.slice(0, 120) || "vokler-download";
+}
+
+function extFromUrl(url: string, mimeType?: string): string {
+  const path = url.split("?")[0].toLowerCase();
+  if (path.endsWith(".webm")) return ".webm";
+  if (path.endsWith(".mp4")) return ".mp4";
+  if (path.endsWith(".m3u8")) return ".m3u8";
+  if (path.endsWith(".mpd")) return ".mpd";
+  const m = mimeType?.toLowerCase() ?? "";
+  if (m.includes("webm")) return ".webm";
+  if (m.includes("mpegurl") || path.includes(".m3u8")) return ".m3u8";
+  if (m.includes("dash") || path.includes(".mpd")) return ".mpd";
+  if (m.includes("mp4")) return ".mp4";
+  return ".mp4";
+}
+
+async function shouldShowVideoBadge(): Promise<boolean> {
+  const data = await chrome.storage.local.get(SETTINGS_KEY);
+  const raw = data[SETTINGS_KEY] as { badgeCount?: boolean } | undefined;
+  return raw?.badgeCount !== false;
+}
 
 async function pushMediaHit(hit: MediaHit): Promise<void> {
   const data = await chrome.storage.local.get(STORAGE_KEY);
@@ -17,6 +66,15 @@ async function pushMediaHit(hit: MediaHit): Promise<void> {
     ...prev.filter((x) => x.url !== hit.url || x.timeStamp !== hit.timeStamp),
   ].slice(0, MAX_URLS);
   await chrome.storage.local.set({ [STORAGE_KEY]: next });
+}
+
+async function resolvePageUrlForTab(tabId: number): Promise<string | undefined> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return tab.url;
+  } catch {
+    return undefined;
+  }
 }
 
 function looksLikeStream(url: string, mimeType?: string): boolean {
@@ -44,12 +102,15 @@ chrome.webRequest.onCompleted.addListener(
       (mime != null && (mime.includes("mpegurl") || mime.includes("dash")));
     if (!streamish) return;
 
+    const pageUrl = await resolvePageUrlForTab(details.tabId);
+
     await pushMediaHit({
       url: details.url,
       tabId: details.tabId,
       mimeType: mime,
       timeStamp: details.timeStamp,
       initiator: details.initiator,
+      pageUrl,
     });
   },
   {
@@ -59,7 +120,55 @@ chrome.webRequest.onCompleted.addListener(
   ["responseHeaders"],
 );
 
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status !== "complete" || !tab.url) return;
+  void (async () => {
+    if (!(await shouldShowVideoBadge())) {
+      await chrome.action.setBadgeText({ text: "", tabId });
+      return;
+    }
+    const isVideo = isVideoPageUrl(tab.url!);
+    await chrome.action.setBadgeText({ text: isVideo ? "1" : "", tabId });
+    if (isVideo) {
+      await chrome.action.setBadgeBackgroundColor({ color: "#e8521a", tabId });
+    }
+  })();
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "DOWNLOAD_STREAM") {
+    const url = message.url as string | undefined;
+    const pageTitle = message.pageTitle as string | undefined;
+    const pageUrl = message.pageUrl as string | undefined;
+    if (!url) {
+      sendResponse({ ok: false, error: "Missing URL" });
+      return false;
+    }
+    void (async () => {
+      try {
+        const base = sanitizeFilename(pageTitle ?? "video");
+        const filename = `${base}${extFromUrl(url, message.mimeType as string | undefined)}`;
+        await chrome.downloads.download({ url, filename, saveAs: false });
+        const data = await chrome.storage.local.get(SETTINGS_KEY);
+        const settings = data[SETTINGS_KEY] as { notifyOnComplete?: boolean } | undefined;
+        if (settings?.notifyOnComplete) {
+          chrome.notifications.create({
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("icons/icon-48.png"),
+            title: "Vokler — Download started",
+            message: filename,
+          });
+        }
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return true;
+  }
   if (message?.type === "OPEN_POPUP_HINT") {
     void chrome.action.openPopup().then(
       () => sendResponse({ ok: true }),
@@ -90,7 +199,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .get(STORAGE_KEY)
       .then((data) => {
         const all = (data[STORAGE_KEY] as MediaHit[] | undefined) ?? [];
-        sendResponse({ hits: all.filter((h) => h.tabId === tabId) });
+        const tabUrl = sender.tab?.url ?? "";
+        const forTab = all.filter((h) => h.tabId === tabId);
+        if (!tabUrl) {
+          sendResponse({ hits: forTab });
+          return;
+        }
+        sendResponse({
+          hits: forTab.filter((h) => sameVideoPage(tabUrl, h.pageUrl)),
+        });
       })
       .catch(() => sendResponse({ hits: [] as MediaHit[] }));
     return true;

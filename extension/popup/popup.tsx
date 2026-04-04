@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { sameVideoPage } from "../shared/same-video-page";
+
 import "./popup.css";
 
 type MediaHit = {
@@ -9,6 +11,7 @@ type MediaHit = {
   mimeType: string | undefined;
   timeStamp: number;
   initiator: string | undefined;
+  pageUrl?: string;
 };
 
 type TabId = "download" | "history" | "settings";
@@ -111,6 +114,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [tabId, setTabId] = useState<number | null>(null);
   const [tabTitle, setTabTitle] = useState<string>("");
+  const [tabUrl, setTabUrl] = useState<string>("");
   const [activeTab, setActiveTab] = useState<TabId>("download");
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [fmtSelected, setFmtSelected] = useState<string>("MP4");
@@ -161,14 +165,16 @@ function App() {
       const t = tabs[0];
       if (t?.id != null) setTabId(t.id);
       if (t?.title) setTabTitle(t.title);
+      if (t?.url) setTabUrl(t.url);
     });
   }, [hits]);
 
   const tabHits = useMemo(() => {
     if (tabId == null) return hits;
     const forTab = hits.filter((h) => h.tabId === tabId);
-    return forTab.length ? forTab : hits;
-  }, [hits, tabId]);
+    if (!tabUrl) return forTab.length ? forTab : hits;
+    return forTab.filter((h) => sameVideoPage(tabUrl, h.pageUrl));
+  }, [hits, tabId, tabUrl]);
 
   const primaryHit = tabHits[0] ?? null;
 
@@ -222,16 +228,39 @@ function App() {
     const url = selectedHit?.url;
     if (!url) return;
     setDlState("busy");
-    const ok = await copyUrl(url);
-    if (!ok) {
-      setDlState("idle");
-      setError("Could not copy URL to clipboard.");
+    setError(null);
+    const res = await new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "DOWNLOAD_STREAM",
+          url,
+          mimeType: selectedHit?.mimeType,
+          pageTitle: tabTitle || "video",
+          pageUrl: tabUrl || undefined,
+        },
+        (r) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve((r as { ok?: boolean; error?: string }) ?? { ok: false });
+        },
+      );
+    });
+    if (res.ok) {
+      setDlState("done");
+      window.setTimeout(() => setDlState("idle"), 2000);
       return;
     }
-    setDlState("done");
-    window.setTimeout(() => {
+    const ok = await copyUrl(url);
+    if (ok) {
       setDlState("idle");
-    }, 2000);
+      setError("Couldn’t start file download — stream URL copied to clipboard.");
+      window.setTimeout(() => setError(null), 4500);
+      return;
+    }
+    setDlState("idle");
+    setError(res.error ?? "Download failed.");
   };
 
   const openApp = () => {
@@ -492,14 +521,14 @@ function App() {
                   <svg viewBox="0 0 24 24">
                     <path d="M12 2v4M12 18v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M2 12h4M18 12h4" />
                   </svg>
-                  Copying…
+                  Downloading…
                 </>
               ) : dlState === "done" ? (
                 <>
                   <svg viewBox="0 0 24 24">
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
-                  Copied!
+                  Started!
                 </>
               ) : (
                 <>
@@ -507,7 +536,7 @@ function App() {
                     <path d="M12 3v12M7 10l5 5 5-5" />
                     <path d="M3 19h18" />
                   </svg>
-                  Copy stream URL
+                  Download stream
                 </>
               )}
             </button>
@@ -644,7 +673,7 @@ function App() {
               <div className="setting-item">
                 <div>
                   <div className="setting-name">Badge count on icon</div>
-                  <div className="setting-desc">Reserved for future use</div>
+                  <div className="setting-desc">Show “1” on supported video pages</div>
                 </div>
                 <label className="toggle">
                   <input

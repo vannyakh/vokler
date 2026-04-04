@@ -8,6 +8,7 @@ type MediaHit = {
   mimeType: string | undefined;
   timeStamp: number;
   initiator: string | undefined;
+  pageUrl?: string;
 };
 
 type PlatformConfig = {
@@ -20,7 +21,8 @@ const PLATFORMS: Record<string, PlatformConfig> = {
   "youtube.com": {
     name: "YouTube",
     mountSelector: "#movie_player",
-    titleSelector: "h1.ytd-watch-metadata yt-formatted-string",
+    titleSelector:
+      'meta[property="og:title"], h1.ytd-watch-metadata yt-formatted-string, ytd-watch-metadata h1 yt-formatted-string',
   },
   "instagram.com": {
     name: "Instagram",
@@ -67,15 +69,58 @@ function getPlatformKey(): string | null {
   return null;
 }
 
+function getYouTubeTitleFromDom(): string | null {
+  const og =
+    document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() ||
+    document.querySelector('meta[name="title"]')?.getAttribute("content")?.trim();
+  if (og) return og;
+  const h1 = document.querySelector(
+    "h1.ytd-watch-metadata yt-formatted-string, ytd-watch-metadata h1 yt-formatted-string, #title h1",
+  );
+  const h1t = h1?.textContent?.trim();
+  if (h1t) return h1t;
+  return null;
+}
+
 function getVideoTitle(): string {
+  const host = location.hostname.replace(/^www\./, "");
+  if (host.includes("youtube.com")) {
+    const yt = getYouTubeTitleFromDom();
+    if (yt) return yt;
+  }
   const key = getPlatformKey();
   const sel = key ? PLATFORMS[key]?.titleSelector : null;
   if (sel) {
-    const el = document.querySelector(sel);
-    const t = el?.textContent?.trim();
-    if (t) return t;
+    const parts = sel.split(",").map((s) => s.trim());
+    for (const p of parts) {
+      const el = document.querySelector(p);
+      const metaContent =
+        p.startsWith("meta") && el
+          ? (el as HTMLMetaElement).content?.trim()
+          : el?.textContent?.trim();
+      const t = metaContent || el?.textContent?.trim();
+      if (t) return t;
+    }
   }
   return document.title.replace(/\s*-\s*YouTube\s*$/i, "").trim() || document.title;
+}
+
+function pageIdentityKey(): string {
+  try {
+    const u = new URL(location.href);
+    if (u.hostname.replace(/^www\./, "").includes("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return `yt:v:${v}`;
+      if (u.pathname.startsWith("/shorts/")) {
+        const seg = u.pathname.split("/").filter(Boolean);
+        return `yt:shorts:${seg[1] ?? u.pathname}`;
+      }
+      return `yt:${u.pathname}${u.search}`;
+    }
+    return u.href;
+  } catch {
+    return location.href;
+  }
 }
 
 function streamLabel(hit: MediaHit): { main: string; sub: string } {
@@ -424,7 +469,7 @@ function pickAudioHit(hits: MediaHit[]): MediaHit | null {
   return audio ?? hits[0] ?? null;
 }
 
-let urlObserver: MutationObserver | null = null;
+let navUnsub: (() => void) | null = null;
 let storageListener:
   | ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void)
   | null = null;
@@ -508,7 +553,7 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
       </div>
       <button type="button" class="vokler-dl-main" id="vokler-save-btn" ${list.length ? "" : "disabled"}>
         <svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg>
-        Copy stream
+        Download
       </button>
       <button type="button" class="vokler-inj-close" id="vokler-inj-close" title="Dismiss" aria-label="Dismiss">
         <svg viewBox="0 0 14 14"><path d="M2 2l10 10M12 2L2 12"/></svg>
@@ -519,10 +564,23 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
   const toast = document.createElement("div");
   toast.className = "vokler-inj-toast";
   toast.id = "vokler-inj-toast";
-  toast.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> Copied to clipboard`;
+  toast.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span id="vokler-toast-msg">Saved</span>`;
 
   mount.el.appendChild(bar);
   document.body.appendChild(toast);
+
+  let titleTicks = 0;
+  const titleInterval = window.setInterval(() => {
+    const still = document.getElementById(BAR_ID);
+    if (!still || still !== bar) {
+      window.clearInterval(titleInterval);
+      return;
+    }
+    const tEl = bar.querySelector("#vokler-inj-title") as HTMLElement | null;
+    if (tEl) tEl.textContent = getVideoTitle();
+    titleTicks += 1;
+    if (titleTicks >= 24) window.clearInterval(titleInterval);
+  }, 350);
 
   const pill = bar.querySelector("#vokler-q-pill") as HTMLElement;
   const dropdown = bar.querySelector("#vokler-q-dropdown") as HTMLElement;
@@ -572,6 +630,21 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
     });
   });
 
+  function showToast(msg: string, success = true): void {
+    const msgEl = toast.querySelector("#vokler-toast-msg");
+    if (msgEl) msgEl.textContent = msg;
+    toast.style.background = success ? "#1e7a45" : "#8c2f2f";
+    toast.style.borderColor = success ? "rgba(46, 204, 113, 0.3)" : "rgba(255, 100, 100, 0.35)";
+    toast.classList.add("vokler-show");
+    window.setTimeout(() => toast.classList.remove("vokler-show"), 2200);
+  }
+
+  function resetMainButton(): void {
+    saveBtn.classList.remove("vokler-busy", "vokler-done");
+    saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg> Download`;
+    saveBtn.disabled = !list.length;
+  }
+
   async function copySelected(): Promise<boolean> {
     if (!selectedUrl && list[0]) {
       selectedUrl = list[0].url;
@@ -585,6 +658,56 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
     }
   }
 
+  function currentHit(): MediaHit | null {
+    if (!selectedUrl && list[0]) selectedUrl = list[0].url;
+    return list.find((h) => h.url === selectedUrl) ?? list[0] ?? null;
+  }
+
+  async function runDownloadFlow(): Promise<void> {
+    if (!list.length) return;
+    const hit = currentHit();
+    if (!hit) return;
+    saveBtn.classList.add("vokler-busy");
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2 2"/></svg> Downloading…`;
+    const res = await new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "DOWNLOAD_STREAM",
+          url: hit.url,
+          mimeType: hit.mimeType,
+          pageTitle: getVideoTitle(),
+          pageUrl: location.href,
+        },
+        (r) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve((r as { ok?: boolean; error?: string }) ?? { ok: false });
+        },
+      );
+    });
+    saveBtn.classList.remove("vokler-busy");
+    if (res.ok) {
+      saveBtn.classList.add("vokler-done");
+      saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> Started`;
+      showToast("Download started", true);
+      window.setTimeout(() => resetMainButton(), 2200);
+      return;
+    }
+    const copied = await copySelected();
+    if (copied) {
+      saveBtn.classList.add("vokler-done");
+      saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> Copied URL`;
+      showToast("Couldn’t save file — stream link copied", false);
+      window.setTimeout(() => resetMainButton(), 2600);
+    } else {
+      showToast(res.error ?? "Download failed", false);
+      resetMainButton();
+    }
+  }
+
   async function runCopyFlow(): Promise<void> {
     if (!list.length) return;
     saveBtn.classList.add("vokler-busy");
@@ -595,20 +718,14 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
     if (ok) {
       saveBtn.classList.add("vokler-done");
       saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> Copied!`;
-      toast.classList.add("vokler-show");
-      window.setTimeout(() => {
-        toast.classList.remove("vokler-show");
-        saveBtn.classList.remove("vokler-done");
-        saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg> Copy stream`;
-        saveBtn.disabled = false;
-      }, 2200);
+      showToast("Copied to clipboard", true);
+      window.setTimeout(() => resetMainButton(), 2200);
     } else {
-      saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg> Copy stream`;
-      saveBtn.disabled = false;
+      resetMainButton();
     }
   }
 
-  saveBtn.addEventListener("click", () => void runCopyFlow());
+  saveBtn.addEventListener("click", () => void runDownloadFlow());
   dlDropdown.addEventListener("click", () => {
     closeDropdown();
     void runCopyFlow();
@@ -621,7 +738,7 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
       selectedUrl = ah.url;
       qLabelEl.textContent = streamLabel(ah).main;
     }
-    void runCopyFlow();
+    void runDownloadFlow();
   });
 
   closeBtn.addEventListener("click", () => {
@@ -669,17 +786,38 @@ async function tryMount(): Promise<void> {
 }
 
 function initNavigationWatch(): void {
-  let lastUrl = location.href;
-  urlObserver = new MutationObserver(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      removeStorageListener();
-      document.getElementById(BAR_ID)?.remove();
-      document.getElementById("vokler-inj-toast")?.remove();
-      window.setTimeout(() => void tryMount(), 800);
-    }
-  });
-  urlObserver.observe(document.body, { subtree: true, childList: true });
+  navUnsub?.();
+  let lastKey = pageIdentityKey();
+
+  const onSpaNav = () => {
+    const next = pageIdentityKey();
+    if (next === lastKey) return;
+    lastKey = next;
+    removeStorageListener();
+    document.getElementById(BAR_ID)?.remove();
+    document.getElementById("vokler-inj-toast")?.remove();
+    const run = () => void tryMount();
+    run();
+    window.setTimeout(run, 400);
+    window.setTimeout(run, 1200);
+  };
+
+  const onPop = () => onSpaNav();
+  window.addEventListener("popstate", onPop);
+  document.addEventListener("yt-navigate-finish", onPop as EventListener);
+  document.addEventListener("yt-page-data-updated", onPop as EventListener);
+
+  const poll = window.setInterval(() => {
+    const next = pageIdentityKey();
+    if (next !== lastKey) onSpaNav();
+  }, 400);
+
+  navUnsub = () => {
+    window.removeEventListener("popstate", onPop);
+    document.removeEventListener("yt-navigate-finish", onPop as EventListener);
+    document.removeEventListener("yt-page-data-updated", onPop as EventListener);
+    window.clearInterval(poll);
+  };
 }
 
 function boot(): void {
