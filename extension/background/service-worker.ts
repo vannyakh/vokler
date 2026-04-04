@@ -59,7 +59,7 @@ chrome.webRequest.onCompleted.addListener(
   ["responseHeaders"],
 );
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "OPEN_POPUP_HINT") {
     void chrome.action.openPopup().then(
       () => sendResponse({ ok: true }),
@@ -78,6 +78,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "CLEAR_MEDIA_HITS") {
     chrome.storage.local.remove(STORAGE_KEY).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message?.type === "GET_TAB_MEDIA_HITS") {
+    const tabId = sender.tab?.id;
+    if (tabId == null) {
+      sendResponse({ hits: [] as MediaHit[] });
+      return false;
+    }
+    chrome.storage.local
+      .get(STORAGE_KEY)
+      .then((data) => {
+        const all = (data[STORAGE_KEY] as MediaHit[] | undefined) ?? [];
+        sendResponse({ hits: all.filter((h) => h.tabId === tabId) });
+      })
+      .catch(() => sendResponse({ hits: [] as MediaHit[] }));
     return true;
   }
   return false;
