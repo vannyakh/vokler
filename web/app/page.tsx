@@ -2,12 +2,13 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { JobQueueCard } from "@/components/JobQueueCard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { VideoInfoPanel } from "@/components/VideoInfoPanel";
 import {
   apiFetch,
+  downloadArchiveFileToBrowser,
   downloadJobFileToBrowser,
+  type ArchiveJobDto,
   type JobDto,
   type PreviewResponseDto,
   previewMedia,
@@ -31,6 +32,11 @@ function safeDownloadFilename(title: string | null | undefined): string {
     .trim()
     .slice(0, 120);
   return /\.(mp4|webm|mkv|m4a|mp3|opus|flac)$/i.test(t) ? t : `${t || "video"}.mp4`;
+}
+
+function safeZipFilename(title: string | null | undefined): string {
+  const base = safeDownloadFilename(title).replace(/\.(mp4|webm|mkv|m4a|mp3|opus|flac)$/i, "");
+  return `${base || "vokler-bundle"}.zip`;
 }
 
 type DownloadMode = "single" | "multi" | "playlist" | "profile";
@@ -133,8 +139,9 @@ export default function HomePage() {
   const [preview, setPreview] = useState<PreviewResponseDto | null>(null);
   const [selectedFormatId, setSelectedFormatId] = useState("");
   const [loadingInfo, setLoadingInfo] = useState(false);
-  const [sessionJobs, setSessionJobs] = useState<JobDto[]>([]);
-  /** Single-tab: one in-flight job; no queue UI — file goes to browser when done. */
+  /** Batch modes (multiple / playlist / profile): one archive job → ZIP. */
+  const [archiveJob, setArchiveJob] = useState<ArchiveJobDto | null>(null);
+  /** Single-tab: one in-flight job; file goes to browser when done. */
   const [singleJob, setSingleJob] = useState<JobDto | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -149,10 +156,8 @@ export default function HomePage() {
         progress: data.progress ?? j.progress,
         status: (data.status ?? j.status) as JobDto["status"],
       });
-      if (mode !== "multi") {
+      if (mode === "single") {
         setSingleJob((prev) => (prev && prev.id === jid ? patch(prev) : prev));
-      } else {
-        setSessionJobs((prev) => prev.map((j) => (j.id === jid ? patch(j) : j)));
       }
     },
     [activeJobId, mode],
@@ -175,7 +180,7 @@ export default function HomePage() {
     if (!primary) return;
     setFormError(null);
     setPreview(null);
-    setSessionJobs([]);
+    setArchiveJob(null);
     setSingleJob(null);
     setActiveJobId(null);
     setLoadingInfo(true);
@@ -195,21 +200,14 @@ export default function HomePage() {
     }
   }, [url, mode]);
 
-  const pollUntilTerminal = useCallback(async (jobId: string) => {
-    let terminal = false;
-    while (!terminal) {
-      await new Promise((r) => setTimeout(r, POLL_MS));
-      const next = await apiFetch<JobDto>(`/jobs/${jobId}`);
-      setSessionJobs((prev) => prev.map((j) => (j.id === jobId ? next : j)));
-      terminal = ["completed", "failed"].includes(next.status);
-    }
-  }, []);
-
   const runDownload = useCallback(async () => {
     if (!selectedFormatId) return;
     setFormError(null);
 
-    if (mode !== "multi") {
+    const batch =
+      mode === "multi" || mode === "playlist" || mode === "profile";
+
+    if (!batch) {
       const one = url.trim();
       if (!one) return;
       setDownloading(true);
@@ -242,29 +240,51 @@ export default function HomePage() {
       return;
     }
 
-    const targets = mode === "multi" ? parseUrls(url) : [url.trim()].filter(Boolean);
-    if (targets.length === 0) return;
+    let body: Record<string, unknown>;
+    if (mode === "multi") {
+      const urls = parseUrls(url);
+      if (urls.length === 0) return;
+      body = {
+        urls,
+        format: selectedFormatId,
+        label: preview?.title ?? null,
+      };
+    } else {
+      const one = url.trim();
+      if (!one) return;
+      body = {
+        url: one,
+        expand_flat: true,
+        format: selectedFormatId,
+        label: preview?.title ?? null,
+      };
+    }
+
     setDownloading(true);
+    setArchiveJob(null);
     try {
-      for (const u of targets) {
-        const created = await apiFetch<JobDto>("/download", {
-          method: "POST",
-          body: JSON.stringify({
-            url: u,
-            format: selectedFormatId,
-          }),
-        });
-        setSessionJobs((prev) => [...prev, created]);
-        setActiveJobId(created.id);
-        await pollUntilTerminal(created.id);
+      const created = await apiFetch<ArchiveJobDto>("/download/archive", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setArchiveJob(created);
+      let last = created;
+      while (!["completed", "failed"].includes(last.status)) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        last = await apiFetch<ArchiveJobDto>(`/archive/${created.id}`);
+        setArchiveJob(last);
       }
+      if (last.status === "failed") {
+        setFormError(last.error_message ?? "Archive failed");
+        return;
+      }
+      await downloadArchiveFileToBrowser(created.id, safeZipFilename(preview?.title));
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Download failed");
     } finally {
       setDownloading(false);
-      setActiveJobId(null);
     }
-  }, [mode, url, selectedFormatId, pollUntilTerminal, preview?.title]);
+  }, [mode, url, selectedFormatId, preview?.title]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -272,7 +292,7 @@ export default function HomePage() {
       if (text) {
         setUrl(mode === "multi" ? text : text.trim());
         setPreview(null);
-        setSessionJobs([]);
+        setArchiveJob(null);
         setSingleJob(null);
         setActiveJobId(null);
         setFormError(null);
@@ -297,10 +317,7 @@ export default function HomePage() {
             </svg>
           </div>
           <div>
-            <div
-              className="font-mono text-[15px] font-bold tracking-tight"
-              style={{ fontFamily: "var(--font-space-mono), monospace" }}
-            >
+            <div className="font-sans text-[15px] font-bold tracking-tight">
               Vokler
             </div>
             <div className="mt-px text-[11px]" style={{ color: "var(--vok-muted)" }}>
@@ -368,7 +385,7 @@ export default function HomePage() {
               setMode(key);
               setFormError(null);
               setPreview(null);
-              setSessionJobs([]);
+              setArchiveJob(null);
               setSingleJob(null);
               setActiveJobId(null);
             }}
@@ -408,7 +425,7 @@ export default function HomePage() {
                   onChange={(e) => {
                     setUrl(e.target.value);
                     setPreview(null);
-                    setSessionJobs([]);
+                    setArchiveJob(null);
                     setSingleJob(null);
                     setActiveJobId(null);
                     setFormError(null);
@@ -435,7 +452,7 @@ export default function HomePage() {
                   onChange={(e) => {
                     setUrl(e.target.value);
                     setPreview(null);
-                    setSessionJobs([]);
+                    setArchiveJob(null);
                     setSingleJob(null);
                     setActiveJobId(null);
                     setFormError(null);
@@ -491,8 +508,14 @@ export default function HomePage() {
           </div>
           {mode === "multi" ? (
             <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
-              One URL per line. Fetch previews the first link; Download runs each line in order with
-              the selected format.
+              One URL per line. Fetch previews the first link. Download queues every line, then builds
+              one ZIP.
+            </p>
+          ) : null}
+          {mode === "playlist" || mode === "profile" ? (
+            <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
+              Fetch loads metadata for the URL. Download expands the playlist or channel tab into
+              individual videos, downloads each, then delivers one ZIP.
             </p>
           ) : null}
         </div>
@@ -514,6 +537,7 @@ export default function HomePage() {
               setFormError(null);
               setSelectedFormatId("");
               setSingleJob(null);
+              setArchiveJob(null);
             }}
             className="shrink-0 rounded-[var(--vok-radius)] border px-3 py-2 text-[13px] font-medium transition hover:opacity-90"
             style={{
@@ -549,12 +573,18 @@ export default function HomePage() {
             onDownload={() => void runDownload()}
             downloading={downloading}
             downloadProgress={
-              mode !== "multi" && singleJob ? singleJob.progress : null
+              mode === "single" && singleJob
+                ? singleJob.progress
+                : mode !== "single" && archiveJob
+                  ? archiveJob.progress
+                  : null
             }
             downloadLabel={
-              mode === "multi" && allUrls.length > 1
-                ? `Download ${allUrls.length} links`
-                : undefined
+              mode === "multi" && allUrls.length > 0
+                ? `Download ZIP (${allUrls.length} links)`
+                : mode === "playlist" || mode === "profile"
+                  ? "Download ZIP (playlist / channel)"
+                  : undefined
             }
           />
         </>
@@ -566,7 +596,7 @@ export default function HomePage() {
         </p>
       ) : null}
 
-      {mode === "multi" && sessionJobs.length > 0 ? (
+      {preview && mode !== "single" ? (
         <>
           <div className="mb-6 mt-10 flex items-center gap-2.5">
             <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
@@ -574,59 +604,69 @@ export default function HomePage() {
               className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider"
               style={{ color: "var(--vok-muted)" }}
             >
-              Queue
+              Bundle
             </span>
             <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
           </div>
-          <div className="flex flex-col gap-0">
-            {sessionJobs.map((j) => (
-              <JobQueueCard
-                key={j.id}
-                job={j}
-                previewTitle={
-                  allUrls[0] && j.url.trim() === allUrls[0].trim()
-                    ? (preview?.title ?? null)
-                    : null
-                }
-                onCopyLink={() => {
-                  void navigator.clipboard.writeText(j.url);
-                }}
-                onRemove={() => {
-                  setSessionJobs((prev) => prev.filter((x) => x.id !== j.id));
-                  if (activeJobId === j.id) setActiveJobId(null);
-                }}
-              />
-            ))}
-          </div>
           <div
-            className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4"
-            style={{ borderColor: "var(--vok-border)" }}
+            className="rounded-[var(--vok-radius)] border p-4"
+            style={{ background: "var(--vok-surface2)", borderColor: "var(--vok-border)" }}
           >
-            <p className="text-[12px]" style={{ color: "var(--vok-muted)" }}>
-              <span style={{ color: "var(--vok-accent)", fontWeight: 600 }}>{sessionJobs.length}</span>{" "}
-              in queue ·{" "}
-              <span style={{ color: "var(--vok-green)", fontWeight: 600 }}>
-                {sessionJobs.filter((x) => x.status === "completed").length}
-              </span>{" "}
-              completed
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setSessionJobs([]);
-                  setActiveJobId(null);
-                }}
-                className="rounded-[var(--vok-radius)] border px-4 py-2.5 text-[13px] font-medium transition hover:opacity-90"
-                style={{
-                  borderColor: "var(--vok-border2)",
-                  color: "var(--vok-muted)",
-                  background: "var(--vok-surface3)",
-                }}
-              >
-                Clear queue
-              </button>
+            <div
+              className="mb-2 text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--vok-muted)" }}
+            >
+              {archiveJob?.source_urls?.length
+                ? `Videos in this ZIP (${archiveJob.source_urls.length})`
+                : "URLs to include"}
             </div>
+            <ul
+              className="max-h-[220px] list-inside list-decimal space-y-1 overflow-y-auto break-all pl-1 text-[12px] leading-relaxed"
+              style={{ color: "var(--vok-text)" }}
+            >
+              {(archiveJob?.source_urls?.length ? archiveJob.source_urls : allUrls).map((u, i) => (
+                <li key={`${i}-${u.slice(0, 120)}`}>{u}</li>
+              ))}
+            </ul>
+            {archiveJob ? (
+              <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--vok-border)" }}>
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span style={{ color: "var(--vok-muted)" }}>
+                    {archiveJob.status === "completed"
+                      ? "ZIP built — check your downloads folder"
+                      : archiveJob.status === "failed"
+                        ? (archiveJob.error_message ?? "Archive failed")
+                        : `Downloading ${Math.min(archiveJob.current_index + 1, archiveJob.total_items)} / ${archiveJob.total_items}`}
+                  </span>
+                  <span className="font-mono font-semibold" style={{ color: "var(--vok-accent)" }}>
+                    {Math.round(Math.min(100, Math.max(0, archiveJob.progress)))}%
+                  </span>
+                </div>
+                <div className="h-[3px] overflow-hidden rounded" style={{ background: "var(--vok-surface3)" }}>
+                  <div
+                    className="h-full rounded transition-[width] duration-300"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, archiveJob.progress))}%`,
+                      background: "linear-gradient(90deg, var(--vok-accent), var(--vok-accent3))",
+                    }}
+                  />
+                </div>
+                {!downloading ? (
+                  <button
+                    type="button"
+                    onClick={() => setArchiveJob(null)}
+                    className="mt-3 rounded-[var(--vok-radius)] border px-3 py-2 text-[12px] font-medium transition hover:opacity-90"
+                    style={{
+                      borderColor: "var(--vok-border2)",
+                      color: "var(--vok-muted)",
+                      background: "var(--vok-surface3)",
+                    }}
+                  >
+                    Clear status
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}

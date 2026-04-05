@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_CORS = (
@@ -43,10 +43,30 @@ class Settings(BaseSettings):
             parts = [x.strip() for x in v.split(",") if x.strip()]
             return parts if parts else list(_DEFAULT_CORS)
         return v
-    storage_backend: str = "local"
+    storage_backend: str = Field(
+        default="local",
+        description="local | r2 | s3 — r2 uses S3 API (Cloudflare R2); s3 is AWS or any S3-compatible store.",
+    )
     local_storage_path: str = "./data/downloads"
     s3_bucket: str | None = None
-    s3_region: str | None = None
+    s3_region: str | None = Field(
+        default=None,
+        description="AWS region; use 'auto' for Cloudflare R2.",
+    )
+    s3_endpoint_url: str | None = Field(
+        default=None,
+        description="S3 API endpoint, e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com for Cloudflare R2.",
+    )
+    s3_force_path_style: bool = Field(
+        default=True,
+        description="Set True for R2 and many S3-compatible endpoints.",
+    )
+    r2_public_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("R2_PUBLIC_BASE_URL", "S3_PUBLIC_BASE_URL"),
+        description="Optional public HTTPS base (R2 custom domain or r2.dev) for direct browser URLs; "
+        "if unset, downloads use presigned redirects to the bucket.",
+    )
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
 

@@ -148,6 +148,66 @@ async def extract_preview(url: str) -> dict[str, Any]:
     return await asyncio.to_thread(extract_preview_sync, url)
 
 
+def _entry_dict_to_url(entry: dict[str, Any]) -> str | None:
+    u = entry.get("url") or entry.get("webpage_url")
+    if u:
+        return str(u).strip()
+    eid = entry.get("id")
+    ie = (entry.get("ie_key") or "").lower()
+    if eid and "youtube" in ie:
+        return f"https://www.youtube.com/watch?v={eid}"
+    return None
+
+
+def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str], str | None]:
+    """
+    List video URLs from a playlist, channel tab, or multi-video page (``extract_flat``).
+    For a single video, returns a one-element list.
+    """
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not isinstance(info, dict):
+            raise RuntimeError("Unexpected extractor response")
+    except (DownloadError, OSError, ValueError) as e:
+        raise RuntimeError(str(e) or "Failed to list media URLs") from e
+
+    title = (
+        info.get("playlist_title")
+        or info.get("title")
+        or info.get("uploader")
+        or info.get("channel")
+    )
+    entries = info.get("entries")
+    if not entries:
+        main = info.get("webpage_url") or info.get("original_url") or url
+        return ([str(main).strip()], title if isinstance(title, str) else None)
+
+    urls: list[str] = []
+    for e in entries:
+        if len(urls) >= max_entries:
+            break
+        if e is None or not isinstance(e, dict):
+            continue
+        u = _entry_dict_to_url(e)
+        if u:
+            urls.append(u)
+    if not urls:
+        main = info.get("webpage_url") or info.get("original_url") or url
+        return ([str(main).strip()], title if isinstance(title, str) else None)
+    return (urls, title if isinstance(title, str) else None)
+
+
+async def extract_flat_urls(url: str, max_entries: int = 100) -> tuple[list[str], str | None]:
+    return await asyncio.to_thread(extract_flat_urls_sync, url, max_entries)
+
+
 def _resolve_output_path(tmp_dir: Path, info: dict[str, Any]) -> Path:
     fp = info.get("filepath")
     if fp:

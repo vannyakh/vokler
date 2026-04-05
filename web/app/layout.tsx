@@ -1,21 +1,25 @@
 import type { Metadata } from "next";
-import { DM_Sans, Space_Mono } from "next/font/google";
+import { JetBrains_Mono, Syne } from "next/font/google";
 import Script from "next/script";
 
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+/** Syne — UI / headings (Google Fonts: 400–700). */
+const fontSans = Syne({
+  variable: "--font-syne",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
-const spaceMono = Space_Mono({
-  variable: "--font-space-mono",
+/** JetBrains Mono — monospace (Google Fonts: 400, 500). */
+const fontMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
-  weight: ["400", "700"],
+  weight: ["400", "500"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -34,7 +38,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${dmSans.variable} ${spaceMono.variable} h-full antialiased`}
+      className={`${fontSans.variable} ${fontMono.variable} h-full antialiased`}
     >
       <body className="min-h-full overflow-x-hidden font-sans">
         <Script id="vokler-theme-init" strategy="beforeInteractive">

@@ -55,8 +55,8 @@ html[data-theme="light"] {
 }
 
 @theme inline {
-  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui;
-  --font-mono: var(--font-space-mono), ui-monospace, monospace;
+  --font-sans: var(--font-syne), ui-sans-serif, system-ui;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
 }
 
 html[data-theme="light"] {
