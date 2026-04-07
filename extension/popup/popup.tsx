@@ -1,91 +1,60 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import { sameVideoPage } from "../shared/same-video-page";
+import { headersJsonWithAppKey, mergeFrontendAppKey } from "../shared/api-auth";
+import {
+  appendPendingDownload,
+  compactQueueItems,
+  DOWNLOAD_QUEUE_KEY,
+  type DownloadQueueItem,
+} from "../shared/download-queue";
 import { isVoklerSupportedVideoPage } from "../shared/supported-video-pages";
 
 import "./popup.css";
 
-type MediaHit = {
-  url: string;
-  tabId: number;
-  mimeType: string | undefined;
-  timeStamp: number;
-  initiator: string | undefined;
-  pageUrl?: string;
-};
-
-type TabId = "download" | "history" | "settings";
+type TabId = "download" | "settings";
 
 type ThemeMode = "light" | "dark";
 
 const SETTINGS_KEY = "voklerPopupSettings";
 const DEFAULT_APP_URL = "http://127.0.0.1:3000";
+const DEFAULT_API_URL = "http://127.0.0.1:8000";
 
 type PopupSettings = {
   theme: ThemeMode;
   appUrl: string;
-  includeSubtitles: boolean;
-  embedThumb: boolean;
-  saveMetadata: boolean;
+  apiBaseUrl: string;
+  frontendAppKey: string;
   autoDetect: boolean;
   badgeCount: boolean;
   notifyOnComplete: boolean;
-  rateLimit: boolean;
-  useProxy: boolean;
 };
 
 const defaultSettings = (): PopupSettings => ({
   theme: "light",
   appUrl: DEFAULT_APP_URL,
-  includeSubtitles: false,
-  embedThumb: true,
-  saveMetadata: true,
+  apiBaseUrl: DEFAULT_API_URL,
+  frontendAppKey: "",
   autoDetect: true,
   badgeCount: true,
   notifyOnComplete: false,
-  rateLimit: false,
-  useProxy: false,
 });
 
-function streamKind(mime: string | undefined, url: string): { label: string; detail: string } {
-  const u = url.toLowerCase();
-  if (mime?.includes("mpegurl") || u.includes(".m3u8")) {
-    return { label: "HLS", detail: "Playlist" };
-  }
-  if (mime?.includes("dash") || u.includes(".mpd")) {
-    return { label: "DASH", detail: "Manifest" };
-  }
-  if (mime?.startsWith("audio/")) {
-    return { label: "♪", detail: mime.split("/")[1]?.slice(0, 8) ?? "Audio" };
-  }
-  if (u.includes(".mp4") || mime?.includes("mp4")) {
-    return { label: "MP4", detail: "Direct" };
-  }
-  if (u.includes(".webm") || mime?.includes("webm")) {
-    return { label: "WEBM", detail: "Direct" };
-  }
-  const short = mime ? mime.split(";")[0].slice(0, 14) : "Stream";
-  return { label: "SRC", detail: short };
-}
-
-function formatChipForHit(mime: string | undefined, url: string): string {
-  const u = url.toLowerCase();
-  if (mime?.includes("mpegurl") || u.includes(".m3u8")) return "HLS";
-  if (mime?.includes("dash") || u.includes(".mpd")) return "DASH";
-  if (mime?.includes("webm")) return "WEBM";
-  if (mime?.includes("audio") || /\.(m4a|aac|opus)(\?|$)/i.test(u)) return "AAC";
-  if (u.includes(".mp4") || mime?.includes("mp4")) return "MP4";
-  return "MP4";
-}
-
-const FMT_OPTIONS = ["MP4", "WEBM", "MOV", "MP3", "AAC", "FLAC", "HLS", "DASH"] as const;
+type PreviewDto = {
+  title: string | null;
+  duration_seconds: number | null;
+  duration_label: string | null;
+  uploader: string | null;
+  thumbnail: string | null;
+  webpage_url: string | null;
+  recommended_format: string | null;
+};
 
 function hostFromUrl(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
-    return "stream";
+    return "page";
   }
 }
 
@@ -96,47 +65,168 @@ function hostAccent(host: string): string {
   return colors[h % colors.length];
 }
 
-function relativeTime(ts: number): string {
-  const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} hr ago`;
-  return `${Math.floor(s / 86400)} days ago`;
-}
-
 function shorten(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
 }
 
+function extForFormat(format: string): string {
+  const f = format.toLowerCase();
+  if (f.startsWith("mp3")) return ".mp3";
+  return ".mp4";
+}
+
+function normalizeApiBase(raw: string): string {
+  const u = raw.trim().replace(/\/$/, "");
+  return u || DEFAULT_API_URL;
+}
+
+async function readFetchError(res: Response): Promise<string> {
+  const text = await res.text();
+  try {
+    const j = JSON.parse(text) as { detail?: unknown };
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail)) return JSON.stringify(j.detail);
+  } catch {
+    /* ignore */
+  }
+  return text || `${res.status} ${res.statusText}`;
+}
+
+/** Popup fetch avoids MV3 service-worker message ports closing before sendResponse. */
+async function fetchPreviewDirect(
+  apiBase: string,
+  pageUrl: string,
+  storedAppKey: string | undefined,
+): Promise<PreviewDto> {
+  const base = normalizeApiBase(apiBase);
+  const appKey = mergeFrontendAppKey(storedAppKey);
+  const res = await fetch(`${base}/preview`, {
+    method: "POST",
+    headers: headersJsonWithAppKey(appKey),
+    body: JSON.stringify({ url: pageUrl.trim() }),
+  });
+  if (!res.ok) {
+    throw new Error(await readFetchError(res));
+  }
+  return res.json() as Promise<PreviewDto>;
+}
+
+function normalizeThumbnailUrl(t: string | null | undefined): string | null {
+  if (t == null || typeof t !== "string") return null;
+  const s = t.trim();
+  if (!s) return null;
+  if (s.startsWith("//")) return `https:${s}`;
+  if (/^https?:\/\//i.test(s)) return s;
+  return null;
+}
+
+/** YouTube watch / shorts / youtu.be — public CDN thumbs when API preview is slow or missing. */
+function youtubeVideoIdFromUrl(href: string): string | null {
+  try {
+    const u = new URL(href);
+    const h = u.hostname.replace(/^www\./, "");
+    if (h === "youtu.be") {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      return id && /^[\w-]{11}$/.test(id) ? id : null;
+    }
+    if (h === "m.youtube.com" || h.endsWith("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v && /^[\w-]{11}$/.test(v)) return v;
+      if (u.pathname.startsWith("/shorts/")) {
+        const seg = u.pathname.split("/").filter(Boolean)[1];
+        if (seg && /^[\w-]{11}$/.test(seg)) return seg;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function youtubeThumbFallback(href: string): string | null {
+  const id = youtubeVideoIdFromUrl(href);
+  if (!id) return null;
+  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+}
+
+function kickQueueFromBackground(): void {
+  chrome.runtime.sendMessage({ type: "QUEUE_KICK" });
+}
+
+function readQueueFromStorage(): Promise<DownloadQueueItem[]> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(DOWNLOAD_QUEUE_KEY, (d) => {
+      const raw = d[DOWNLOAD_QUEUE_KEY];
+      resolve(Array.isArray(raw) ? (raw as DownloadQueueItem[]) : []);
+    });
+  });
+}
+
+function writeQueueToStorage(items: DownloadQueueItem[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ [DOWNLOAD_QUEUE_KEY]: items }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function App() {
   const version = chrome.runtime.getManifest().version;
-  const [hits, setHits] = useState<MediaHit[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [tabId, setTabId] = useState<number | null>(null);
   const [tabTitle, setTabTitle] = useState<string>("");
   const [tabUrl, setTabUrl] = useState<string>("");
   const [activeTab, setActiveTab] = useState<TabId>("download");
-  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  const [fmtSelected, setFmtSelected] = useState<string>("MP4");
   const [settings, setSettings] = useState<PopupSettings>(defaultSettings);
-  const [dlState, setDlState] = useState<"idle" | "busy" | "done">("idle");
+  const [dlState, setDlState] = useState<"idle" | "adding" | "added">("idle");
+  const [queueItems, setQueueItems] = useState<DownloadQueueItem[]>([]);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const [previewStatus, setPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">(
+    "idle",
+  );
+  const [preview, setPreview] = useState<PreviewDto | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [thumbCandidateIndex, setThumbCandidateIndex] = useState(0);
 
-  const refresh = useCallback(() => {
-    chrome.runtime.sendMessage({ type: "GET_MEDIA_HITS" }, (res) => {
-      if (chrome.runtime.lastError) {
-        setError(chrome.runtime.lastError.message ?? "Unknown error");
-        return;
-      }
-      const next = (res?.hits as MediaHit[]) ?? [];
-      setHits(next);
-      setError(null);
+  const loadTab = useCallback(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const t = tabs[0];
+      if (t?.title) setTabTitle(t.title);
+      if (t?.url) setTabUrl(t.url);
     });
   }, []);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    loadTab();
+  }, [loadTab]);
+
+  useEffect(() => {
+    kickQueueFromBackground();
+  }, []);
+
+  useEffect(() => {
+    const loadQ = () => {
+      chrome.storage.local.get(DOWNLOAD_QUEUE_KEY, (d) => {
+        const raw = d[DOWNLOAD_QUEUE_KEY];
+        setQueueItems(Array.isArray(raw) ? (raw as DownloadQueueItem[]) : []);
+      });
+    };
+    loadQ();
+    const onStorage = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string,
+    ) => {
+      if (area !== "local" || !changes[DOWNLOAD_QUEUE_KEY]) return;
+      const n = changes[DOWNLOAD_QUEUE_KEY].newValue;
+      setQueueItems(Array.isArray(n) ? (n as DownloadQueueItem[]) : []);
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    return () => chrome.storage.onChanged.removeListener(onStorage);
+  }, []);
 
   useEffect(() => {
     chrome.storage.local.get(SETTINGS_KEY).then((data) => {
@@ -161,109 +251,145 @@ function App() {
     persistSettings({ ...settings, theme: next });
   }, [settings, persistSettings]);
 
-  useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const t = tabs[0];
-      if (t?.id != null) setTabId(t.id);
-      if (t?.title) setTabTitle(t.title);
-      if (t?.url) setTabUrl(t.url);
-    });
-  }, [hits]);
-
-  const tabHits = useMemo(() => {
-    if (tabId == null) return hits;
-    const forTab = hits.filter((h) => h.tabId === tabId);
-    if (!tabUrl) return forTab.length ? forTab : hits;
-    return forTab.filter((h) => sameVideoPage(tabUrl, h.pageUrl));
-  }, [hits, tabId, tabUrl]);
-
-  const primaryHit = tabHits[0] ?? null;
-
   const tabIsSupportedVideoPage = !tabUrl || isVoklerSupportedVideoPage(tabUrl);
 
   useEffect(() => {
-    if (!tabHits.length) {
-      setSelectedUrl(null);
+    if (!tabUrl || !tabIsSupportedVideoPage) {
+      setPreviewStatus("idle");
+      setPreview(null);
+      setPreviewError(null);
       return;
     }
-    if (!selectedUrl || !tabHits.some((h) => h.url === selectedUrl)) {
-      setSelectedUrl(tabHits[0].url);
-    }
-  }, [tabHits, selectedUrl]);
+    let cancelled = false;
+    setPreviewStatus("loading");
+    setPreviewError(null);
+    void (async () => {
+      try {
+        const data = await fetchPreviewDirect(
+          settings.apiBaseUrl,
+          tabUrl,
+          settings.frontendAppKey,
+        );
+        if (cancelled) return;
+        setPreview(data);
+        setPreviewStatus("ready");
+      } catch (e) {
+        if (cancelled) return;
+        setPreviewStatus("error");
+        setPreviewError(e instanceof Error ? e.message : String(e));
+        setPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tabUrl, tabIsSupportedVideoPage, previewNonce, settings.apiBaseUrl, settings.frontendAppKey]);
+
+  const thumbnailCandidates = useMemo(() => {
+    const list: string[] = [];
+    const seen = new Set<string>();
+    const push = (u: string | null) => {
+      if (!u || seen.has(u)) return;
+      seen.add(u);
+      list.push(u);
+    };
+    push(normalizeThumbnailUrl(preview?.thumbnail));
+    push(youtubeThumbFallback(tabUrl));
+    return list;
+  }, [preview?.thumbnail, tabUrl]);
 
   useEffect(() => {
-    if (primaryHit) {
-      setFmtSelected(formatChipForHit(primaryHit.mimeType, primaryHit.url));
-    }
-  }, [primaryHit?.url, primaryHit?.mimeType]);
+    setThumbCandidateIndex(0);
+  }, [thumbnailCandidates.join("|")]);
 
-  const selectedHit = useMemo(
-    () => tabHits.find((h) => h.url === selectedUrl) ?? primaryHit,
-    [tabHits, selectedUrl, primaryHit],
+  const activeThumbnail =
+    thumbCandidateIndex < thumbnailCandidates.length
+      ? thumbnailCandidates[thumbCandidateIndex]
+      : null;
+
+  const displayTitle = useMemo(() => {
+    if (preview?.title?.trim()) return preview.title.trim();
+    return tabTitle || "Current tab";
+  }, [preview, tabTitle]);
+
+  const formatForJob = useMemo(() => {
+    const r = preview?.recommended_format?.trim();
+    if (r) return r;
+    return "original";
+  }, [preview]);
+
+  const hostLabel = tabUrl ? hostFromUrl(tabUrl) : "—";
+
+  const sortedQueue = useMemo(
+    () => [...queueItems].sort((a, b) => b.createdAt - a.createdAt),
+    [queueItems],
   );
 
-  const qualityCards = useMemo(() => {
-    const seen = new Set<string>();
-    const list: MediaHit[] = [];
-    for (const h of tabHits) {
-      if (seen.has(h.url)) continue;
-      seen.add(h.url);
-      list.push(h);
-      if (list.length >= 6) break;
-    }
-    return list;
-  }, [tabHits]);
+  const activeQueueCount = useMemo(
+    () => queueItems.filter((i) => i.status === "pending" || i.status === "running").length,
+    [queueItems],
+  );
 
-  const clear = () => {
-    chrome.runtime.sendMessage({ type: "CLEAR_MEDIA_HITS" }, () => refresh());
+  const thisTabJob = useMemo(() => {
+    if (!tabUrl) return null;
+    return (
+      queueItems.find(
+        (i) =>
+          i.pageUrl === tabUrl &&
+          (i.status === "pending" || i.status === "running"),
+      ) ?? null
+    );
+  }, [queueItems, tabUrl]);
+
+  const finishedCount = useMemo(
+    () => queueItems.filter((i) => i.status === "completed" || i.status === "failed").length,
+    [queueItems],
+  );
+
+  const refreshAll = () => {
+    loadTab();
+    setPreviewNonce((n) => n + 1);
   };
 
-  const copyUrl = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const startDownload = async () => {
-    const url = selectedHit?.url;
-    if (!url) return;
-    setDlState("busy");
+  const addToQueue = async () => {
+    if (!tabUrl || !tabIsSupportedVideoPage) return;
+    setDlState("adding");
     setError(null);
-    const res = await new Promise<{ ok?: boolean; error?: string }>((resolve) => {
-      chrome.runtime.sendMessage(
-        {
-          type: "DOWNLOAD_STREAM",
-          url,
-          mimeType: selectedHit?.mimeType,
-          pageTitle: tabTitle || "video",
-          pageUrl: tabUrl || undefined,
-        },
-        (r) => {
-          if (chrome.runtime.lastError) {
-            resolve({ ok: false, error: chrome.runtime.lastError.message });
-            return;
-          }
-          resolve((r as { ok?: boolean; error?: string }) ?? { ok: false });
-        },
-      );
-    });
-    if (res.ok) {
-      setDlState("done");
-      window.setTimeout(() => setDlState("idle"), 2000);
-      return;
-    }
-    const ok = await copyUrl(url);
-    if (ok) {
+    const thumb = thumbnailCandidates[0] ?? null;
+    try {
+      const existing = await readQueueFromStorage();
+      const r = appendPendingDownload(existing, {
+        pageUrl: tabUrl,
+        pageTitle: tabTitle,
+        displayTitle: displayTitle,
+        format: formatForJob,
+        thumbnailUrl: thumb,
+      });
+      if (!r.ok) {
+        setError(r.error);
+        setDlState("idle");
+        return;
+      }
+      await writeQueueToStorage(r.next);
+      kickQueueFromBackground();
+      setQueueItems(r.next);
+      setDlState("added");
+      window.setTimeout(() => setDlState("idle"), 1600);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       setDlState("idle");
-      setError("Couldn’t start file download — stream URL copied to clipboard.");
-      window.setTimeout(() => setError(null), 4500);
-      return;
     }
-    setDlState("idle");
-    setError(res.error ?? "Download failed.");
+  };
+
+  const clearFinished = async () => {
+    try {
+      const q = await readQueueFromStorage();
+      const next = compactQueueItems(q.filter((i) => i.status === "pending" || i.status === "running"));
+      await writeQueueToStorage(next);
+      setQueueItems(next);
+    } catch {
+      /* ignore */
+    }
   };
 
   const openApp = () => {
@@ -271,12 +397,7 @@ function App() {
     chrome.tabs.create({ url: u });
   };
 
-  const detectedTitle =
-    tabTitle ||
-    (primaryHit ? shorten(hostFromUrl(primaryHit.url), 40) : "No stream captured yet");
-
-  const detectedHost = primaryHit ? hostFromUrl(primaryHit.url) : "—";
-  const detectedTime = primaryHit ? relativeTime(primaryHit.timeStamp) : "";
+  const canDownload = tabIsSupportedVideoPage && !!tabUrl && dlState !== "adding";
 
   return (
     <div className="app">
@@ -315,15 +436,10 @@ function App() {
               </svg>
             )}
           </button>
-          <button type="button" className="icon-btn" title="Refresh captures" onClick={refresh}>
+          <button type="button" className="icon-btn" title="Refresh" onClick={refreshAll}>
             <svg viewBox="0 0 24 24">
               <path d="M2 12a10 10 0 1 1 1.5 5.2" />
               <path d="M2 18v-6h6" />
-            </svg>
-          </button>
-          <button type="button" className="icon-btn" title="Pin is managed by the browser menu">
-            <svg viewBox="0 0 24 24">
-              <path d="M12 2l2.4 6.4H21l-5.4 3.9 2.1 6.4L12 15 6.3 18.7l2.1-6.4L3 8.4h6.6z" />
             </svg>
           </button>
           <button
@@ -340,36 +456,90 @@ function App() {
         </div>
       </div>
 
-      <div className="detected-bar">
-        <div className="detected-thumb">
-          <svg viewBox="0 0 24 24">
-            <rect x="2" y="4" width="20" height="16" rx="2" />
-            <polygon points="10,8 16,12 10,16" />
-          </svg>
-          {primaryHit ? (
-            <div className="play-overlay">
-              <svg viewBox="0 0 24 24">
-                <polygon points="5,3 19,12 5,21" />
-              </svg>
-            </div>
-          ) : null}
+      <section className="dl-section dl-section--flush">
+        <div className="dl-section-head">
+          <h2 className="dl-section-title">Current video</h2>
+          <p className="dl-section-sub">
+            Add to the background queue and keep watching — earlier videos finish even if you navigate
+            away.
+          </p>
         </div>
-        <div className="detected-info">
-          <div className="detected-title">{detectedTitle}</div>
-          <div className="detected-meta">
-            <div className="plat-chip">
-              <div
-                className="plat-dot"
-                style={{ background: hostAccent(detectedHost) }}
+        <div className="video-detail-card video-detail-card--rich">
+          <div className="video-detail-thumb">
+            {activeThumbnail ? (
+              <img
+                src={activeThumbnail}
+                alt=""
+                className="video-detail-thumb-img"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
+                onError={() =>
+                  setThumbCandidateIndex((i) =>
+                    i + 1 < thumbnailCandidates.length ? i + 1 : thumbnailCandidates.length,
+                  )
+                }
               />
-              {shorten(detectedHost, 22)}
+            ) : (
+              <div className="video-detail-thumb-fallback">
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <polygon points="10,8 16,12 10,16" />
+                </svg>
+              </div>
+            )}
+          </div>
+          <div className="video-detail-body">
+            <div className="video-detail-title" title={displayTitle}>
+              {shorten(displayTitle, 80)}
             </div>
-            {primaryHit ? (
-              <div className="detected-dur">{detectedTime}</div>
+            <div className="video-detail-meta">
+              <span className="plat-chip">
+                <span className="plat-dot" style={{ background: hostAccent(hostLabel) }} />
+                {shorten(hostLabel, 22)}
+              </span>
+              {preview?.duration_label ? (
+                <span className="video-detail-dur">{preview.duration_label}</span>
+              ) : null}
+            </div>
+            {preview?.uploader?.trim() ? (
+              <div className="video-detail-uploader">{shorten(preview.uploader.trim(), 52)}</div>
+            ) : null}
+            {!tabIsSupportedVideoPage ? (
+              <p className="video-detail-hint">
+                Open a supported video page (watch URL, reel, TikTok video, etc.).
+              </p>
+            ) : previewStatus === "loading" ? (
+              <p className="video-detail-hint">Loading video info from API…</p>
+            ) : previewStatus === "error" ? (
+              <p className="video-detail-hint video-detail-hint--warn">
+                {previewError ??
+                  "Preview unavailable — download may still work if the API can fetch this URL."}
+              </p>
             ) : null}
           </div>
         </div>
-      </div>
+        {tabUrl && tabIsSupportedVideoPage ? (
+          <dl className="dl-meta-grid">
+            <div className="dl-meta-row">
+              <dt>Page URL</dt>
+              <dd title={tabUrl}>{shorten(tabUrl, 46)}</dd>
+            </div>
+            <div className="dl-meta-row">
+              <dt>Format</dt>
+              <dd title={formatForJob}>
+                <code className="dl-mono">{shorten(formatForJob, 36)}</code>
+              </dd>
+            </div>
+            {preview?.webpage_url ? (
+              <div className="dl-meta-row">
+                <dt>Canonical</dt>
+                <dd title={preview.webpage_url}>{shorten(preview.webpage_url, 46)}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+      </section>
 
       <div className="tabs">
         <button
@@ -378,13 +548,6 @@ function App() {
           onClick={() => setActiveTab("download")}
         >
           Download
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === "history" ? "active" : ""}`}
-          onClick={() => setActiveTab("history")}
-        >
-          History
         </button>
         <button
           type="button"
@@ -399,224 +562,153 @@ function App() {
         {error ? <p className="popup-error">{error}</p> : null}
 
         <div className={`page ${activeTab === "download" ? "active" : ""}`}>
-          <div>
-            <div className="section-label">Captured streams</div>
-            {!tabIsSupportedVideoPage ? (
-              <p className="empty-hint">
-                This page isn’t a supported video URL. Open a watch page, reel, TikTok video, or
-                similar so Vokler can detect the stream for this tab.
-              </p>
-            ) : qualityCards.length === 0 ? (
-              <p className="empty-hint">
-                Play a video on this tab. Stream-like requests (HLS, MP4, etc.) appear here when
-                detected.
-              </p>
-            ) : (
-              <div className="quality-grid">
-                {qualityCards.map((h, i) => {
-                  const sk = streamKind(h.mimeType, h.url);
-                  const sel = h.url === selectedUrl;
-                  return (
-                    <button
-                      key={h.url}
-                      type="button"
-                      className={`q-card ${sel ? "selected" : ""}`}
-                      onClick={() => setSelectedUrl(h.url)}
-                    >
-                      {i === 0 ? <div className="q-badge">BEST</div> : null}
-                      <div className="q-res">{sk.label}</div>
-                      <div className="q-info">{sk.detail}</div>
-                    </button>
-                  );
-                })}
+          {thisTabJob ? (
+            <div className="dl-progress-block dl-progress-block--tab">
+              <div className="dl-progress-head">
+                <span className="dl-progress-label">
+                  {thisTabJob.status === "pending" ? "Queued" : "Downloading this video"}
+                </span>
+                {thisTabJob.status === "running" ? (
+                  <span className="dl-progress-pct">{Math.round(thisTabJob.progress)}%</span>
+                ) : null}
               </div>
-            )}
-          </div>
-
-          <div>
-            <div className="section-label">Format hint</div>
-            <div className="fmt-row" role="list">
-              {FMT_OPTIONS.map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={`fmt-chip ${fmtSelected === f ? "selected" : ""}`}
-                  onClick={() => setFmtSelected(f)}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="quick-opts">
-            <div className="opt-row">
-              <div>
-                <div className="opt-label">
-                  <svg viewBox="0 0 24 24">
-                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                  Include subtitles
-                </div>
-                <div className="opt-sub">For use with the full Vokler app</div>
-              </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.includeSubtitles}
-                  onChange={(e) =>
-                    persistSettings({ ...settings, includeSubtitles: e.target.checked })
-                  }
+              <div className="dl-progress-track" aria-hidden>
+                <div
+                  className={`dl-progress-fill ${thisTabJob.status === "pending" ? "dl-progress-fill--pulse" : ""}`}
+                  style={{
+                    width:
+                      thisTabJob.status === "pending"
+                        ? "28%"
+                        : `${Math.min(100, Math.max(0, thisTabJob.progress))}%`,
+                  }}
                 />
-                <span className="track" />
-              </label>
-            </div>
-            <div className="opt-row">
-              <div>
-                <div className="opt-label">
-                  <svg viewBox="0 0 24 24">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <path d="M3 9h18M9 21V9" />
-                  </svg>
-                  Embed thumbnail
-                </div>
-                <div className="opt-sub">Prefer cover art when saving</div>
               </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.embedThumb}
-                  onChange={(e) =>
-                    persistSettings({ ...settings, embedThumb: e.target.checked })
-                  }
-                />
-                <span className="track" />
-              </label>
             </div>
-            <div className="opt-row">
-              <div>
-                <div className="opt-label">
-                  <svg viewBox="0 0 24 24">
-                    <path d="M4 4h16v4H4zM4 12h10M4 16h7" />
-                  </svg>
-                  Save metadata
-                </div>
-                <div className="opt-sub">Title, page URL, time</div>
-              </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.saveMetadata}
-                  onChange={(e) =>
-                    persistSettings({ ...settings, saveMetadata: e.target.checked })
-                  }
-                />
-                <span className="track" />
-              </label>
-            </div>
-          </div>
+          ) : null}
 
-          <div className="dl-split">
+          <div className="dl-actions">
             <button
               type="button"
-              className={`dl-btn ${dlState === "done" ? "dl-btn--success" : ""}`}
-              disabled={!selectedHit || dlState === "busy"}
-              onClick={() => void startDownload()}
+              className={`dl-btn ${dlState === "added" ? "dl-btn--success" : ""}`}
+              disabled={!canDownload}
+              onClick={() => void addToQueue()}
             >
-              {dlState === "busy" ? (
+              {dlState === "adding" ? (
                 <>
-                  <svg viewBox="0 0 24 24">
+                  <svg viewBox="0 0 24 24" className="dl-btn__spin" aria-hidden>
                     <path d="M12 2v4M12 18v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M2 12h4M18 12h4" />
                   </svg>
-                  Downloading…
+                  Adding…
                 </>
-              ) : dlState === "done" ? (
+              ) : dlState === "added" ? (
                 <>
-                  <svg viewBox="0 0 24 24">
+                  <svg viewBox="0 0 24 24" aria-hidden>
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
-                  Started!
+                  In queue
                 </>
               ) : (
                 <>
-                  <svg viewBox="0 0 24 24">
+                  <svg viewBox="0 0 24 24" aria-hidden>
                     <path d="M12 3v12M7 10l5 5 5-5" />
                     <path d="M3 19h18" />
                   </svg>
-                  Download stream
+                  Add to download queue
                 </>
               )}
             </button>
-            <button
-              type="button"
-              className="dl-more"
-              title="Copy URL again"
-              disabled={!selectedHit}
-              onClick={() => selectedHit && void copyUrl(selectedHit.url)}
-            >
-              <svg viewBox="0 0 24 24">
-                <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" />
-                <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
-                <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" />
-              </svg>
-            </button>
+            <p className="dl-hint">
+              Runs in the background. Queue order: first in, first out. Duplicate URLs are blocked
+              while already queued or downloading.
+            </p>
           </div>
-        </div>
 
-        <div className={`page ${activeTab === "history" ? "active" : ""}`}>
-          <div className="history-list">
-            {hits.length === 0 ? (
-              <p className="empty-hint">No captures yet.</p>
+          <section className="dl-section">
+            <div className="dl-section-head dl-section-head--row">
+              <div>
+                <h2 className="dl-section-title">Queue</h2>
+                <p className="dl-section-sub dl-section-sub--inline">
+                  {activeQueueCount} active
+                  {finishedCount ? ` · ${finishedCount} recent finished` : ""}
+                </p>
+              </div>
+              {finishedCount > 0 ? (
+                <button type="button" className="btn-text" onClick={() => void clearFinished()}>
+                  Clear finished
+                </button>
+              ) : null}
+            </div>
+            {sortedQueue.length === 0 ? (
+              <p className="queue-empty">No downloads yet. Add the current video to start.</p>
             ) : (
-              hits.map((h) => {
-                const sk = streamKind(h.mimeType, h.url);
-                const sel = h.url === selectedUrl;
-                return (
-                  <button
-                    key={`${h.url}-${h.timeStamp}`}
-                    type="button"
-                    className={`hist-item ${sel ? "selected" : ""}`}
-                    onClick={() => {
-                      setSelectedUrl(h.url);
-                      setActiveTab("download");
-                    }}
-                  >
-                    <div className="hist-thumb">
-                      <svg viewBox="0 0 24 24">
-                        <polygon points="5,3 19,12 5,21" />
-                      </svg>
-                    </div>
-                    <div className="hist-info">
-                      <div className="hist-title">
-                        {shorten(
-                          (() => {
-                            try {
-                              const u = new URL(h.url);
-                              return u.hostname + u.pathname;
-                            } catch {
-                              return h.url;
-                            }
-                          })(),
-                          52,
+              <ul className="queue-list">
+                {sortedQueue.map((item) => {
+                  const isThisTab = tabUrl !== "" && item.pageUrl === tabUrl;
+                  const st = item.status;
+                  const stLabel =
+                    st === "pending"
+                      ? "Queued"
+                      : st === "running"
+                        ? "Downloading"
+                        : st === "completed"
+                          ? "Saved"
+                          : "Failed";
+                  return (
+                    <li
+                      key={item.localId}
+                      className={`queue-row ${isThisTab ? "queue-row--current" : ""}`}
+                    >
+                      <div className="queue-row-thumb">
+                        {item.thumbnailUrl ? (
+                          <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="queue-row-thumb-ph" aria-hidden>
+                            <svg viewBox="0 0 24 24">
+                              <polygon points="10,8 16,12 10,16" fill="currentColor" />
+                            </svg>
+                          </span>
                         )}
                       </div>
-                      <div className="hist-meta">
-                        {sk.label} · {fmtSelected} · {relativeTime(h.timeStamp)}
+                      <div className="queue-row-body">
+                        <div className="queue-row-title" title={item.displayTitle}>
+                          {shorten(item.displayTitle, 56)}
+                        </div>
+                        <div className="queue-row-meta">
+                          <span className={`queue-status queue-status--${st}`}>{stLabel}</span>
+                          {isThisTab ? <span className="queue-pill">This tab</span> : null}
+                          <span className="queue-fmt">{shorten(item.format, 20)}</span>
+                        </div>
+                        {st === "running" ? (
+                          <div className="queue-progress-track">
+                            <div
+                              className="queue-progress-fill"
+                              style={{
+                                width: `${Math.min(100, Math.max(0, item.progress))}%`,
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                        {st === "failed" && item.error ? (
+                          <p className="queue-row-err">{shorten(item.error, 120)}</p>
+                        ) : null}
                       </div>
-                    </div>
-                    <div className="hist-status st-done">Saved</div>
-                  </button>
-                );
-              })
+                    </li>
+                  );
+                })}
+              </ul>
             )}
-          </div>
-          <button type="button" className="clear-history-btn" onClick={clear}>
-            Clear history
-          </button>
+          </section>
         </div>
 
         <div className={`page ${activeTab === "settings" ? "active" : ""}`}>
+          <div className="settings-intro">
+            <p className="settings-intro-lead">Vokler extension</p>
+            <p className="settings-intro-text">
+              Point the extension at your FastAPI backend and optional <code>X-App-Key</code>. Preview
+              loads in the popup; downloads are processed in the background queue so you can change
+              videos anytime.
+            </p>
+          </div>
           <div className="settings-section">
             <div className="setting-group">
               <div className="setting-group-label">Appearance</div>
@@ -645,11 +737,11 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <div className="setting-group-label">App</div>
-              <div className="setting-item">
+              <div className="setting-group-label">Connections</div>
+              <div className="setting-item setting-item--stack">
                 <div>
-                  <div className="setting-name">Full app URL</div>
-                  <div className="setting-desc">Opens in a new tab</div>
+                  <div className="setting-name">Web app URL</div>
+                  <div className="setting-desc">Next.js UI — opened from the footer link</div>
                 </div>
                 <input
                   className="setting-input setting-input--url"
@@ -658,14 +750,49 @@ function App() {
                   onChange={(e) => persistSettings({ ...settings, appUrl: e.target.value })}
                 />
               </div>
+              <div className="setting-item setting-item--stack">
+                <div>
+                  <div className="setting-name">API base URL</div>
+                  <div className="setting-desc">
+                    Same host/port as <code className="setting-code">NEXT_PUBLIC_API_URL</code> (e.g.
+                    http://127.0.0.1:8000)
+                  </div>
+                </div>
+                <input
+                  className="setting-input setting-input--url"
+                  type="url"
+                  value={settings.apiBaseUrl}
+                  onChange={(e) => persistSettings({ ...settings, apiBaseUrl: e.target.value })}
+                />
+              </div>
+              <div className="setting-item setting-item--stack">
+                <div>
+                  <div className="setting-name">Frontend app key</div>
+                  <div className="setting-desc">
+                    Same as API <code className="setting-code">FRONTEND_APP_KEY</code> — sent as{" "}
+                    <code className="setting-code">X-App-Key</code>. Optional if baked in at build (
+                    <code className="setting-code">VITE_FRONTEND_APP_KEY</code>).
+                  </div>
+                </div>
+                <input
+                  className="setting-input setting-input--url"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Paste key if not set in extension .env"
+                  value={settings.frontendAppKey}
+                  onChange={(e) => persistSettings({ ...settings, frontendAppKey: e.target.value })}
+                />
+              </div>
             </div>
 
             <div className="setting-group">
               <div className="setting-group-label">Behavior</div>
               <div className="setting-item">
                 <div>
-                  <div className="setting-name">Auto-detect on page load</div>
-                  <div className="setting-desc">Extension records stream requests</div>
+                  <div className="setting-name">Auto-detect streams</div>
+                  <div className="setting-desc">
+                    Capture media requests for the injected player bar (not used for API downloads)
+                  </div>
                 </div>
                 <label className="toggle">
                   <input
@@ -680,8 +807,8 @@ function App() {
               </div>
               <div className="setting-item">
                 <div>
-                  <div className="setting-name">Badge count on icon</div>
-                  <div className="setting-desc">Show “1” on supported video pages</div>
+                  <div className="setting-name">Badge on icon</div>
+                  <div className="setting-desc">On supported video pages</div>
                 </div>
                 <label className="toggle">
                   <input
@@ -696,7 +823,7 @@ function App() {
               </div>
               <div className="setting-item">
                 <div>
-                  <div className="setting-name">Notify on completion</div>
+                  <div className="setting-name">Notify when file is ready</div>
                 </div>
                 <label className="toggle">
                   <input
@@ -710,50 +837,11 @@ function App() {
                 </label>
               </div>
             </div>
-
-            <div className="setting-group">
-              <div className="setting-group-label">Advanced</div>
-              <div className="setting-item">
-                <div>
-                  <div className="setting-name">Rate limiting</div>
-                  <div className="setting-desc">Placeholder</div>
-                </div>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.rateLimit}
-                    onChange={(e) =>
-                      persistSettings({ ...settings, rateLimit: e.target.checked })
-                    }
-                  />
-                  <span className="track" />
-                </label>
-              </div>
-              <div className="setting-item">
-                <div>
-                  <div className="setting-name">Use proxy</div>
-                </div>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.useProxy}
-                    onChange={(e) =>
-                      persistSettings({ ...settings, useProxy: e.target.checked })
-                    }
-                  />
-                  <span className="track" />
-                </label>
-              </div>
-            </div>
           </div>
         </div>
       </div>
 
-      <div className="footer">
-        <div className="footer-stat">
-          <span>{hits.length}</span> captures · tab{" "}
-          <span>{tabId ?? "—"}</span>
-        </div>
+      <div className="footer footer--simple">
         <button type="button" className="open-app" onClick={openApp}>
           Open full app ↗
         </button>

@@ -1,3 +1,4 @@
+import { scheduleDownloadQueue } from "./download-queue-runner";
 import { sameVideoPage } from "../shared/same-video-page";
 import { isVoklerSupportedVideoPage } from "../shared/supported-video-pages";
 
@@ -47,6 +48,12 @@ async function shouldShowVideoBadge(): Promise<boolean> {
   return raw?.badgeCount !== false;
 }
 
+async function isStreamAutoDetectOn(): Promise<boolean> {
+  const data = await chrome.storage.local.get(SETTINGS_KEY);
+  const raw = data[SETTINGS_KEY] as { autoDetect?: boolean } | undefined;
+  return raw?.autoDetect !== false;
+}
+
 async function pushMediaHit(hit: MediaHit): Promise<void> {
   const data = await chrome.storage.local.get(STORAGE_KEY);
   const prev = (data[STORAGE_KEY] as MediaHit[] | undefined) ?? [];
@@ -82,6 +89,7 @@ function looksLikeStream(url: string, mimeType?: string): boolean {
 chrome.webRequest.onCompleted.addListener(
   async (details) => {
     if (details.tabId < 0 || !details.url) return;
+    if (!(await isStreamAutoDetectOn())) return;
     const mime =
       details.responseHeaders?.find((h) => h.name.toLowerCase() === "content-type")
         ?.value ?? undefined;
@@ -125,6 +133,14 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
       await chrome.action.setBadgeBackgroundColor({ color: "#e8521a", tabId });
     }
   })();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  scheduleDownloadQueue();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  scheduleDownloadQueue();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -203,6 +219,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
       .catch(() => sendResponse({ hits: [] as MediaHit[] }));
     return true;
+  }
+  if (message?.type === "QUEUE_KICK") {
+    scheduleDownloadQueue();
+    return false;
   }
   return false;
 });
