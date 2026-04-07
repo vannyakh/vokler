@@ -26,3 +26,18 @@ class PreviewResponse(BaseModel):
     webpage_url: str | None
     recommended_format: str | None = None
     formats: list[MediaFormatRow]
+
+
+class BundleItem(BaseModel):
+    url: str
+    title: str
+    thumbnail: str | None = None
+    duration_seconds: int | None = None
+    duration_label: str | None = None
+
+
+class BundlePreviewResponse(PreviewResponse):
+    """First video’s formats plus all flat playlist / tab entries for UI rows."""
+
+    bundle_title: str | None = None
+    bundle_items: list[BundleItem] = Field(default_factory=list)

@@ -1,0 +1,116 @@
+/* ── Toast container ─────────────────────────────────────────────────────────── */
+
+.region {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+/* ── Toast row ────────────────────────────────────────────────────────────────── */
+
+.toast {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 280px;
+  max-width: 380px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+  cursor: default;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+
+.toastVisible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toastExiting {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Type border accents */
+.success { border-left: 3px solid #22c55e; }
+.error   { border-left: 3px solid #f44336; }
+.warning { border-left: 3px solid #f59e0b; }
+.info    { border-left: 3px solid var(--accent, #7c6af0); }
+
+/* ── Icon ─────────────────────────────────────────────────────────────────────── */
+
+.icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  line-height: 0;
+}
+
+.success .icon { color: #22c55e; }
+.error   .icon { color: #f44336; }
+.warning .icon { color: #f59e0b; }
+.info    .icon { color: var(--accent, #7c6af0); }
+
+/* ── Message ──────────────────────────────────────────────────────────────────── */
+
+.message {
+  flex: 1;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--foreground, #f1f5f9);
+  word-break: break-word;
+}
+
+/* ── Dismiss button ───────────────────────────────────────────────────────────── */
+
+.dismiss {
+  all: unset;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 6px;
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.dismiss:hover { opacity: 1; }
+
+/* ── Progress bar ─────────────────────────────────────────────────────────────── */
+
+.progress {
+  position: absolute;
+  bottom: 0;
+  left: 3px;
+  right: 0;
+  height: 2px;
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  opacity: 0.5;
+  /* width transitions from 100% → 0 via inline style + CSS transition */
+}
+
+.success .progressBar { background: #22c55e; }
+.error   .progressBar { background: #f44336; }
+.warning .progressBar { background: #f59e0b; }
+.info    .progressBar { background: var(--accent, #7c6af0); }

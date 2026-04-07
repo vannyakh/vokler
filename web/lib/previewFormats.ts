@@ -5,6 +5,175 @@ export function isAudioOnlyRow(row: MediaFormatRowDto): boolean {
   return !v || v === "none";
 }
 
+function hasAudioCodec(row: MediaFormatRowDto): boolean {
+  const a = row.acodec;
+  return !!a && a !== "none";
+}
+
+/** Video track without an audio stream (e.g. DASH video-only). */
+export function isVideoOnlyRow(row: MediaFormatRowDto): boolean {
+  if (isAudioOnlyRow(row)) return false;
+  return !hasAudioCodec(row);
+}
+
+/** Single file with both video and audio. */
+export function isVideoWithAudioRow(row: MediaFormatRowDto): boolean {
+  if (isAudioOnlyRow(row)) return false;
+  return hasAudioCodec(row);
+}
+
+export type DownloadMenuCategory = "video_audio" | "audio" | "video_only";
+
+export type DownloadMenuEntry = {
+  format_id: string;
+  category: DownloadMenuCategory;
+  /** Primary line, e.g. "MP4 1080p" */
+  title: string;
+  /** Size or bitrate hint */
+  hint: string | null;
+  isRecommended: boolean;
+};
+
+function bestByFilesize(rows: MediaFormatRowDto[]): MediaFormatRowDto | null {
+  if (rows.length === 0) return null;
+  return [...rows].sort((a, b) => (b.filesize ?? 0) - (a.filesize ?? 0))[0] ?? null;
+}
+
+function heightBucketKey(row: MediaFormatRowDto): string {
+  const h = parseHeightPx(row);
+  return h !== null ? String(snapHeightToBucket(h)) : "0";
+}
+
+function dedupeVideoPool(
+  pool: MediaFormatRowDto[],
+  recommended_format: string | null,
+): MediaFormatRowDto[] {
+  const groups = new Map<string, MediaFormatRowDto[]>();
+  for (const row of pool) {
+    const ext = (row.ext || "mp4").toLowerCase();
+    const key = `${heightBucketKey(row)}|${ext}`;
+    const g = groups.get(key);
+    if (g) g.push(row);
+    else groups.set(key, [row]);
+  }
+  const out: MediaFormatRowDto[] = [];
+  for (const [, rows] of groups) {
+    if (recommended_format) {
+      const pref = rows.find((r) => r.format_id === recommended_format);
+      if (pref) {
+        out.push(pref);
+        continue;
+      }
+    }
+    const pick = bestByFilesize(rows);
+    if (pick) out.push(pick);
+  }
+  return out;
+}
+
+function formatSizeHint(filesize: number | null | undefined): string | null {
+  if (filesize == null || filesize <= 0) return null;
+  if (filesize < 1024) return `${filesize} B`;
+  if (filesize < 1024 * 1024) return `${(filesize / 1024).toFixed(filesize < 10_240 ? 1 : 0)} KB`;
+  return `${(filesize / (1024 * 1024)).toFixed(filesize < 10_485_760 ? 1 : 1)} MB`;
+}
+
+/**
+ * Builds a SaveFrom-style ordered list: video+audio, then audio-only, then video-only.
+ * One entry per resolution/ext bucket where possible.
+ */
+export function buildDownloadMenuEntries(
+  formats: MediaFormatRowDto[],
+  recommended_format: string | null,
+): DownloadMenuEntry[] {
+  if (formats.length === 0) return [];
+
+  const vaPool = dedupeVideoPool(
+    formats.filter(isVideoWithAudioRow),
+    recommended_format,
+  );
+  const voPool = dedupeVideoPool(
+    formats.filter(isVideoOnlyRow),
+    recommended_format,
+  );
+  let audioPool = formats.filter(isAudioOnlyRow);
+  if (audioPool.length === 0) audioPool = [];
+
+  const byExtAudio = new Map<string, MediaFormatRowDto[]>();
+  for (const row of audioPool) {
+    const ext = (row.ext || "audio").toLowerCase();
+    const v = byExtAudio.get(ext);
+    if (v) v.push(row);
+    else byExtAudio.set(ext, [row]);
+  }
+  const audioPicks: MediaFormatRowDto[] = [];
+  for (const [, rows] of byExtAudio) {
+    if (recommended_format) {
+      const pref = rows.find((r) => r.format_id === recommended_format);
+      if (pref) {
+        audioPicks.push(pref);
+        continue;
+      }
+    }
+    const pick = bestByFilesize(rows);
+    if (pick) audioPicks.push(pick);
+  }
+  audioPicks.sort((a, b) => (b.tbr ?? 0) - (a.tbr ?? 0));
+
+  const toEntry = (row: MediaFormatRowDto, category: DownloadMenuCategory): DownloadMenuEntry => {
+    const ext = (row.ext || "").toUpperCase() || "FILE";
+    const h = parseHeightPx(row);
+    const heightLabel = h !== null ? `${snapHeightToBucket(h)}p` : null;
+    let title: string;
+    if (category === "audio") {
+      title = `${ext} audio`;
+    } else if (heightLabel) {
+      title = `${ext} ${heightLabel}`;
+    } else {
+      title = `${ext} ${row.resolution || "video"}`.trim();
+    }
+    const hintParts: string[] = [];
+    const sz = formatSizeHint(row.filesize);
+    if (sz) hintParts.push(sz);
+    if (category === "audio" && row.tbr != null && row.tbr > 0) {
+      hintParts.push(`~${Math.round(row.tbr)} kb/s`);
+    }
+    if (category === "video_only") hintParts.push("No audio");
+    return {
+      format_id: row.format_id,
+      category,
+      title,
+      hint: hintParts.length ? hintParts.join(" · ") : null,
+      isRecommended: recommended_format != null && row.format_id === recommended_format,
+    };
+  };
+
+  const formatHeight = (id: string) => {
+    const row = formats.find((f) => f.format_id === id);
+    return row ? parseHeightPx(row) ?? 0 : 0;
+  };
+
+  const vaEntries = vaPool
+    .map((r) => toEntry(r, "video_audio"))
+    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id));
+
+  const audioEntries = audioPicks.map((r) => toEntry(r, "audio"));
+  const voEntries = voPool
+    .map((r) => toEntry(r, "video_only"))
+    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id));
+
+  const combined = [...vaEntries, ...audioEntries, ...voEntries];
+  if (combined.length > 0) return combined;
+
+  return formats.slice(0, 32).map((row) => ({
+    format_id: row.format_id,
+    category: (isAudioOnlyRow(row) ? "audio" : isVideoOnlyRow(row) ? "video_only" : "video_audio") as DownloadMenuCategory,
+    title: `${(row.ext || "file").toUpperCase()} · ${row.resolution || row.format_note || row.format_id}`,
+    hint: formatSizeHint(row.filesize),
+    isRecommended: recommended_format != null && row.format_id === recommended_format,
+  }));
+}
+
 /** Max dimension in pixels from resolution string, or null for audio-only rows. */
 export function parseHeightPx(row: MediaFormatRowDto): number | null {
   const r = row.resolution || "";

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from arq import create_pool
@@ -15,9 +16,15 @@ from app.deps import get_optional_user_id
 from app.models.archive import ArchiveJob
 from app.models.job import DownloadJob, JobStatus
 from app.schemas.archive import ArchiveCreate, ArchivePublic
-from app.schemas.job import DownloadCreate, JobPublic
-from app.schemas.preview import MediaFormatRow, PreviewRequest, PreviewResponse
-from app.services.downloader import extract_flat_urls, extract_preview
+from app.schemas.job import DownloadCreate, JobFileDownloadLink, JobPublic
+from app.schemas.preview import (
+    BundleItem,
+    BundlePreviewResponse,
+    MediaFormatRow,
+    PreviewRequest,
+    PreviewResponse,
+)
+from app.services.downloader import extract_flat_entries, extract_flat_urls, extract_preview
 from app.services.storage import parse_s3_uri, presigned_get_url_async
 from app.services.url_parser import detect_platform
 
@@ -74,6 +81,30 @@ async def _enqueue_archive(archive_id: UUID) -> None:
         await pool.close()
 
 
+async def _remote_artifact_url(
+    result_path: str,
+    *,
+    log_id: UUID,
+    log_kind: str,
+) -> str | None:
+    """HTTPS public URL or presigned S3 URL, or ``None`` if the artifact is only on local disk."""
+    rp = (result_path or "").strip()
+    if rp.startswith("https://") or rp.startswith("http://"):
+        return rp
+    parsed = parse_s3_uri(rp)
+    if parsed is None:
+        return None
+    bucket, key = parsed
+    try:
+        return await presigned_get_url_async(bucket, key)
+    except Exception as e:
+        logger.warning("presigned URL failed %s_id=%s: %s", log_kind, log_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not generate download link",
+        ) from e
+
+
 async def _artifact_response_from_result_path(
     result_path: str,
     *,
@@ -82,21 +113,9 @@ async def _artifact_response_from_result_path(
 ) -> FileResponse | RedirectResponse:
     """Serve local file, redirect to HTTPS, or presign S3 — shared by single jobs and archive ZIPs."""
     rp = (result_path or "").strip()
-    if rp.startswith("https://") or rp.startswith("http://"):
-        return RedirectResponse(url=rp, status_code=status.HTTP_302_FOUND)
-
-    parsed = parse_s3_uri(rp)
-    if parsed is not None:
-        bucket, key = parsed
-        try:
-            url = await presigned_get_url_async(bucket, key)
-        except Exception as e:
-            logger.warning("presigned URL failed %s_id=%s: %s", log_kind, log_id, e)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Could not generate download link",
-            ) from e
-        return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    remote = await _remote_artifact_url(rp, log_id=log_id, log_kind=log_kind)
+    if remote is not None:
+        return RedirectResponse(url=remote, status_code=status.HTTP_302_FOUND)
 
     base = Path(settings.local_storage_path).resolve()
     path = _resolve_artifact_file(rp, base)
@@ -133,6 +152,52 @@ async def preview_media(body: PreviewRequest):
     format_rows = data.pop("formats")
     formats = [MediaFormatRow.model_validate(f) for f in format_rows]
     return PreviewResponse(**data, formats=formats)
+
+
+@router.post("/preview/bundle", response_model=BundlePreviewResponse)
+async def preview_bundle(body: PreviewRequest):
+    """Playlist / channel / profile: list all entries + format table from the first video."""
+    url = str(body.url).strip()
+    try:
+        items_raw, bundle_title = await extract_flat_entries(url)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    if not items_raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No videos found for this URL",
+        )
+    last_err: str | None = None
+    data: dict[str, Any] | None = None
+    for row in items_raw[: min(8, len(items_raw))]:
+        one = str(row.get("url") or "").strip()
+        if not one:
+            continue
+        try:
+            data = await extract_preview(one)
+        except RuntimeError as e:
+            last_err = str(e) or "Failed to read media info"
+            data = None
+            continue
+        last_err = None
+        break
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=last_err or "Failed to load format list for this playlist",
+        )
+    format_rows = data.pop("formats")
+    formats = [MediaFormatRow.model_validate(f) for f in format_rows]
+    bundle_items = [BundleItem.model_validate(x) for x in items_raw]
+    return BundlePreviewResponse(
+        bundle_title=bundle_title,
+        bundle_items=bundle_items,
+        **data,
+        formats=formats,
+    )
 
 
 @router.post("/download", response_model=JobPublic, status_code=status.HTTP_202_ACCEPTED)
@@ -203,6 +268,30 @@ async def download_job_file_short(
 ):
     """Serve the finished file for browser download."""
     return await _job_file_response(job_id, requester_id, db)
+
+
+@router.get("/files/{job_id}/download-link", response_model=JobFileDownloadLink)
+async def job_file_download_link(
+    job_id: UUID,
+    requester_id: UUID | None = Depends(get_optional_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return how to download without ``fetch`` following a cross-origin 302 (R2 CORS)."""
+    job = await db.scalar(select(DownloadJob).where(DownloadJob.id == job_id))
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.user_id is not None and requester_id != job.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not _is_completed(job) or not job.result_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File not ready or download failed",
+        )
+    rp = (job.result_path or "").strip()
+    remote = await _remote_artifact_url(rp, log_id=job_id, log_kind="job")
+    if remote is not None:
+        return JobFileDownloadLink(mode="redirect", url=remote)
+    return JobFileDownloadLink(mode="blob", url=f"/files/{job_id}")
 
 
 @router.get("/download/files/{job_id}")
@@ -340,3 +429,27 @@ async def download_archive_file_short(
 ):
     """Download the finished ZIP for a batch / playlist / profile job."""
     return await _archive_file_response(archive_id, requester_id, db)
+
+
+@router.get("/files/archive/{archive_id}/download-link", response_model=JobFileDownloadLink)
+async def archive_file_download_link(
+    archive_id: UUID,
+    requester_id: UUID | None = Depends(get_optional_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Like ``GET /files/{job_id}/download-link`` but for archive ZIPs."""
+    aj = await db.scalar(select(ArchiveJob).where(ArchiveJob.id == archive_id))
+    if not aj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archive not found")
+    if aj.user_id is not None and requester_id != aj.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archive not found")
+    if not _is_archive_completed(aj) or not aj.result_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archive not ready or build failed",
+        )
+    rp = (aj.result_path or "").strip()
+    remote = await _remote_artifact_url(rp, log_id=archive_id, log_kind="archive")
+    if remote is not None:
+        return JobFileDownloadLink(mode="redirect", url=remote)
+    return JobFileDownloadLink(mode="blob", url=f"/files/archive/{archive_id}")

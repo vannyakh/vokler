@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine
+from app.middleware import FrontendAppKeyMiddleware
 from app.routers import auth, download, history, ws
 
 
@@ -12,6 +13,12 @@ from app.routers import auth, download, history, ws
 async def lifespan(_app: FastAPI):
     yield
     await engine.dispose()
+
+
+if settings.app_env == "production" and not settings.frontend_app_key:
+    raise RuntimeError(
+        "FRONTEND_APP_KEY must be set when APP_ENV=production (empty keys are not allowed).",
+    )
 
 
 app = FastAPI(
@@ -30,6 +37,8 @@ _cors_kw: dict = {
 }
 if settings.app_env == "development" and settings.cors_allow_localhost_regex:
     _cors_kw["allow_origin_regex"] = _dev_origin_re
+# App key runs inside CORS so 403 (and other early responses) still get CORS headers.
+app.add_middleware(FrontendAppKeyMiddleware)
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])

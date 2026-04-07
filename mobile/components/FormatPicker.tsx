@@ -45,7 +45,7 @@ export function FormatPicker({ value, onChange, disabled }: Props) {
           </Pressable>
         ))}
       </View>
-      <Text style={styles.subLabel}>Quality (UI only — API coming soon)</Text>
+      <Text style={styles.subLabel}>Quality</Text>
       <View style={styles.qualityWrap}>
         {QUALITY.map((q) => (
           <Pressable

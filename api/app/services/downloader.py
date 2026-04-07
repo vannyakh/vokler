@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 from yt_dlp.utils import DownloadError
@@ -148,6 +150,42 @@ async def extract_preview(url: str) -> dict[str, Any]:
     return await asyncio.to_thread(extract_preview_sync, url)
 
 
+def normalize_youtube_bundle_url(url: str) -> str:
+    """
+    yt-dlp ``extract_flat`` on ``watch?v=…&list=…`` returns a single video (``entries`` is
+    ``None``). Use the canonical playlist URL so the full list is expanded.
+    Handles ``youtu.be/VIDEO?list=…`` the same way.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return raw
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return raw
+    host = (parsed.netloc or "").lower()
+    if host.endswith(":443"):
+        host = host[:-4]
+    host = host.split("@")[-1]
+    if "youtube.com" not in host and not re.fullmatch(r"(?:[\w-]+\.)?youtu\.be", host):
+        return raw
+    qs = parse_qs(parsed.query, keep_blank_values=False)
+    list_vals = qs.get("list") or []
+    list_id = (list_vals[0] or "").strip() if list_vals else ""
+    if not list_id:
+        return raw
+
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    is_watch = bool(segments and segments[0] == "watch")
+    is_shorts = bool(segments and segments[0] == "shorts")
+    is_youtu_be = bool(re.fullmatch(r"(?:[\w-]+\.)?youtu\.be", host))
+    has_v = bool(qs.get("v"))
+
+    if is_youtu_be or (is_watch and has_v) or is_shorts:
+        return f"https://www.youtube.com/playlist?list={list_id}"
+    return raw
+
+
 def _entry_dict_to_url(entry: dict[str, Any]) -> str | None:
     u = entry.get("url") or entry.get("webpage_url")
     if u:
@@ -164,11 +202,13 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
     List video URLs from a playlist, channel tab, or multi-video page (``extract_flat``).
     For a single video, returns a one-element list.
     """
+    url = normalize_youtube_bundle_url(url)
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
+        "ignoreerrors": True,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -193,6 +233,11 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
     for e in entries:
         if len(urls) >= max_entries:
             break
+        if isinstance(e, str):
+            u = e.strip()
+            if u:
+                urls.append(u)
+            continue
         if e is None or not isinstance(e, dict):
             continue
         u = _entry_dict_to_url(e)
@@ -206,6 +251,118 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
 
 async def extract_flat_urls(url: str, max_entries: int = 100) -> tuple[list[str], str | None]:
     return await asyncio.to_thread(extract_flat_urls_sync, url, max_entries)
+
+
+def _entry_thumbnail(entry: dict[str, Any]) -> str | None:
+    thumbs = entry.get("thumbnails")
+    if isinstance(thumbs, list) and thumbs:
+        last = thumbs[-1]
+        if isinstance(last, dict):
+            u = last.get("url")
+            if u:
+                return str(u).strip()
+    t = entry.get("thumbnail")
+    if t:
+        return str(t).strip()
+    eid = entry.get("id")
+    ie = (entry.get("ie_key") or "").lower()
+    if eid and "youtube" in ie:
+        return f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg"
+    return None
+
+
+def _bundle_title_from_info(info: dict[str, Any]) -> str | None:
+    t = (
+        info.get("playlist_title")
+        or info.get("title")
+        or info.get("uploader")
+        or info.get("channel")
+    )
+    return str(t).strip() if isinstance(t, str) and t.strip() else None
+
+
+def extract_flat_entries_sync(url: str, max_entries: int = 100) -> tuple[list[dict[str, Any]], str | None]:
+    """
+    Flat playlist / tab / profile listing with per-row metadata for UI.
+    """
+    url = normalize_youtube_bundle_url(url)
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "ignoreerrors": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not isinstance(info, dict):
+            raise RuntimeError("Unexpected extractor response")
+    except (DownloadError, OSError, ValueError) as e:
+        raise RuntimeError(str(e) or "Failed to list media URLs") from e
+
+    title_hint = _bundle_title_from_info(info)
+    entries = info.get("entries")
+
+    def row_from_video_info(v: dict[str, Any], fallback_url: str) -> dict[str, Any]:
+        u = _entry_dict_to_url(v) or str(
+            v.get("webpage_url") or v.get("original_url") or fallback_url,
+        ).strip()
+        dur = v.get("duration")
+        title = v.get("title") or v.get("id") or "Video"
+        return {
+            "url": u,
+            "title": str(title),
+            "thumbnail": _entry_thumbnail(v),
+            "duration_seconds": int(dur) if dur is not None else None,
+            "duration_label": _format_duration_label(dur),
+        }
+
+    if not entries:
+        main = str(info.get("webpage_url") or info.get("original_url") or url).strip()
+        return ([row_from_video_info(info, main)], title_hint)
+
+    rows: list[dict[str, Any]] = []
+    for e in entries:
+        if len(rows) >= max_entries:
+            break
+        if isinstance(e, str):
+            u = e.strip()
+            if u:
+                rows.append(
+                    {
+                        "url": u,
+                        "title": "Video",
+                        "thumbnail": None,
+                        "duration_seconds": None,
+                        "duration_label": None,
+                    },
+                )
+            continue
+        if e is None or not isinstance(e, dict):
+            continue
+        u = _entry_dict_to_url(e)
+        if not u:
+            continue
+        dur = e.get("duration")
+        rows.append(
+            {
+                "url": u,
+                "title": str(e.get("title") or e.get("id") or "Video"),
+                "thumbnail": _entry_thumbnail(e),
+                "duration_seconds": int(dur) if dur is not None else None,
+                "duration_label": _format_duration_label(dur),
+            },
+        )
+
+    if not rows:
+        main = str(info.get("webpage_url") or info.get("original_url") or url).strip()
+        return ([row_from_video_info(info, main)], title_hint)
+    return (rows, title_hint)
+
+
+async def extract_flat_entries(url: str, max_entries: int = 100) -> tuple[list[dict[str, Any]], str | None]:
+    return await asyncio.to_thread(extract_flat_entries_sync, url, max_entries)
 
 
 def _resolve_output_path(tmp_dir: Path, info: dict[str, Any]) -> Path:

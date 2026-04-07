@@ -47,6 +47,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://vokler:vokler@db:5432/vokler
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
+      FRONTEND_APP_KEY: ${FRONTEND_APP_KEY:-dev-frontend-app-key}
     depends_on:
       db:
         condition: service_healthy

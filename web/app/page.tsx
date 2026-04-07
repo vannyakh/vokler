@@ -1,45 +1,21 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { VideoInfoPanel } from "@/components/VideoInfoPanel";
-import {
-  apiFetch,
-  downloadArchiveFileToBrowser,
-  downloadJobFileToBrowser,
-  type ArchiveJobDto,
-  type JobDto,
-  type PreviewResponseDto,
-  previewMedia,
-  wsUrlForJob,
-} from "@/lib/api";
+import { useToast } from "@/components/ui/toast/Toast";
+import { looksLikeHttpUrl, parseUrls } from "@/lib/download/urlHelpers";
 import { useJobProgressWebSocket } from "@/lib/useWebSocket";
-
-const POLL_MS = 2000;
-
-/** Non-empty lines = URLs (one per line). */
-function parseUrls(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
-function safeDownloadFilename(title: string | null | undefined): string {
-  const t = (title ?? "video")
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-    .trim()
-    .slice(0, 120);
-  return /\.(mp4|webm|mkv|m4a|mp3|opus|flac)$/i.test(t) ? t : `${t || "video"}.mp4`;
-}
-
-function safeZipFilename(title: string | null | undefined): string {
-  const base = safeDownloadFilename(title).replace(/\.(mp4|webm|mkv|m4a|mp3|opus|flac)$/i, "");
-  return `${base || "vokler-bundle"}.zip`;
-}
-
-type DownloadMode = "single" | "multi" | "playlist" | "profile";
+import { type JobDto, wsUrlForJob } from "@/lib/api";
+import {
+  autoPreviewAttemptKey,
+  cancelAutoFetchDebounce,
+  scheduleAutoFetchDebounce,
+  selectAllUrls,
+  useDownloadStore,
+  type DownloadMode,
+} from "@/stores/downloadStore";
 
 const PLATFORMS: { label: string; dot: string }[] = [
   { label: "YouTube", dot: "#ff0000" },
@@ -99,6 +75,15 @@ function ClipboardIcon({ className }: { className?: string }) {
   );
 }
 
+function Spinner({ className }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-90 ${className ?? ""}`}
+      aria-hidden
+    />
+  );
+}
+
 function TabIcon({ name }: { name: "single" | "multi" | "playlist" | "profile" }) {
   const stroke = "currentColor";
   if (name === "single") {
@@ -134,34 +119,45 @@ function TabIcon({ name }: { name: "single" | "multi" | "playlist" | "profile" }
 }
 
 export default function HomePage() {
-  const [mode, setMode] = useState<DownloadMode>("single");
-  const [url, setUrl] = useState("");
-  const [preview, setPreview] = useState<PreviewResponseDto | null>(null);
-  const [selectedFormatId, setSelectedFormatId] = useState("");
-  const [loadingInfo, setLoadingInfo] = useState(false);
-  /** Batch modes (multiple / playlist / profile): one archive job → ZIP. */
-  const [archiveJob, setArchiveJob] = useState<ArchiveJobDto | null>(null);
-  /** Single-tab: one in-flight job; file goes to browser when done. */
-  const [singleJob, setSingleJob] = useState<JobDto | null>(null);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const { addToast } = useToast();
 
-  const onWsProgress = useCallback(
-    (data: { job_id?: string; progress?: number; status?: string }) => {
-      const jid = data.job_id ?? activeJobId;
-      if (!jid) return;
-      const patch = (j: JobDto): JobDto => ({
-        ...j,
-        progress: data.progress ?? j.progress,
-        status: (data.status ?? j.status) as JobDto["status"],
-      });
-      if (mode === "single") {
-        setSingleJob((prev) => (prev && prev.id === jid ? patch(prev) : prev));
-      }
-    },
-    [activeJobId, mode],
+  const mode = useDownloadStore((s) => s.mode);
+  const url = useDownloadStore((s) => s.url);
+  const preview = useDownloadStore((s) => s.preview);
+  const selectedFormatId = useDownloadStore((s) => s.selectedFormatId);
+  const loadingInfo = useDownloadStore((s) => s.loadingInfo);
+  const archiveJob = useDownloadStore((s) => s.archiveJob);
+  const singleJob = useDownloadStore((s) => s.singleJob);
+  const activeJobId = useDownloadStore((s) => s.activeJobId);
+  const sourceUrl = useDownloadStore((s) => s.sourceUrl);
+  const downloading = useDownloadStore((s) => s.downloading);
+  const autoPreviewBlockedKey = useDownloadStore((s) => s.autoPreviewBlockedKey);
+
+  const setMode = useDownloadStore((s) => s.setMode);
+  const onUrlInputChange = useDownloadStore((s) => s.onUrlInputChange);
+  const setSelectedFormatId = useDownloadStore((s) => s.setSelectedFormatId);
+  const clearArchiveJob = useDownloadStore((s) => s.clearArchiveJob);
+  const clearPreviewSession = useDownloadStore((s) => s.clearPreviewSession);
+  const fetchInfoManual = useDownloadStore((s) => s.fetchInfoManual);
+  const runFetchPreview = useDownloadStore((s) => s.runFetchPreview);
+  const runDownload = useDownloadStore((s) => s.runDownload);
+  const pasteFromClipboardStore = useDownloadStore((s) => s.pasteFromClipboard);
+
+  const allUrls = useMemo(
+    () => selectAllUrls({ mode, url, sourceUrl }),
+    [mode, url, sourceUrl],
   );
+
+  const onWsProgress = useCallback((data: { job_id?: string; progress?: number; status?: string }) => {
+    const st = useDownloadStore.getState();
+    const jid = data.job_id ?? st.activeJobId;
+    if (!jid || st.mode !== "single") return;
+    const patch: Partial<JobDto> = {
+      ...(typeof data.progress === "number" ? { progress: data.progress } : {}),
+      ...(typeof data.status === "string" ? { status: data.status as JobDto["status"] } : {}),
+    };
+    if (Object.keys(patch).length) st.patchSingleJobIfMatch(jid, patch);
+  }, []);
 
   useJobProgressWebSocket(
     activeJobId,
@@ -169,138 +165,36 @@ export default function HomePage() {
     onWsProgress,
   );
 
-  const allUrls = useMemo(() => {
-    if (mode === "multi") return parseUrls(url);
-    const one = url.trim();
-    return one ? [one] : [];
-  }, [url, mode]);
-
-  const fetchInfo = useCallback(async () => {
-    const primary = mode === "multi" ? parseUrls(url)[0] : url.trim();
-    if (!primary) return;
-    setFormError(null);
-    setPreview(null);
-    setArchiveJob(null);
-    setSingleJob(null);
-    setActiveJobId(null);
-    setLoadingInfo(true);
-    try {
-      const data = await previewMedia(primary);
-      setPreview(data);
-      const def =
-        data.recommended_format &&
-        data.formats.some((f) => f.format_id === data.recommended_format)
-          ? data.recommended_format
-          : data.formats[0]?.format_id ?? "";
-      setSelectedFormatId(def);
-    } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Could not load video info");
-    } finally {
-      setLoadingInfo(false);
-    }
-  }, [url, mode]);
-
-  const runDownload = useCallback(async () => {
-    if (!selectedFormatId) return;
-    setFormError(null);
-
-    const batch =
-      mode === "multi" || mode === "playlist" || mode === "profile";
-
-    if (!batch) {
-      const one = url.trim();
-      if (!one) return;
-      setDownloading(true);
-      setSingleJob(null);
-      try {
-        const created = await apiFetch<JobDto>("/download", {
-          method: "POST",
-          body: JSON.stringify({ url: one, format: selectedFormatId }),
-        });
-        setSingleJob(created);
-        setActiveJobId(created.id);
-        let last = created;
-        while (!["completed", "failed"].includes(last.status)) {
-          await new Promise((r) => setTimeout(r, POLL_MS));
-          last = await apiFetch<JobDto>(`/jobs/${created.id}`);
-          setSingleJob(last);
-        }
-        if (last.status === "failed") {
-          setFormError(last.error_message ?? "Download failed");
-          return;
-        }
-        await downloadJobFileToBrowser(created.id, safeDownloadFilename(preview?.title));
-      } catch (e) {
-        setFormError(e instanceof Error ? e.message : "Download failed");
-      } finally {
-        setDownloading(false);
-        setActiveJobId(null);
-        setSingleJob(null);
-      }
+  useEffect(() => {
+    if (mode === "multi") {
+      cancelAutoFetchDebounce();
       return;
     }
-
-    let body: Record<string, unknown>;
-    if (mode === "multi") {
-      const urls = parseUrls(url);
-      if (urls.length === 0) return;
-      body = {
-        urls,
-        format: selectedFormatId,
-        label: preview?.title ?? null,
-      };
-    } else {
-      const one = url.trim();
-      if (!one) return;
-      body = {
-        url: one,
-        expand_flat: true,
-        format: selectedFormatId,
-        label: preview?.title ?? null,
-      };
+    if (downloading || loadingInfo) {
+      cancelAutoFetchDebounce();
+      return;
     }
-
-    setDownloading(true);
-    setArchiveJob(null);
-    try {
-      const created = await apiFetch<ArchiveJobDto>("/download/archive", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setArchiveJob(created);
-      let last = created;
-      while (!["completed", "failed"].includes(last.status)) {
-        await new Promise((r) => setTimeout(r, POLL_MS));
-        last = await apiFetch<ArchiveJobDto>(`/archive/${created.id}`);
-        setArchiveJob(last);
-      }
-      if (last.status === "failed") {
-        setFormError(last.error_message ?? "Archive failed");
-        return;
-      }
-      await downloadArchiveFileToBrowser(created.id, safeZipFilename(preview?.title));
-    } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Download failed");
-    } finally {
-      setDownloading(false);
+    const primary = url.trim();
+    if (!primary || !looksLikeHttpUrl(primary)) {
+      cancelAutoFetchDebounce();
+      return;
     }
-  }, [mode, url, selectedFormatId, preview?.title]);
+    if (autoPreviewAttemptKey(mode, primary) === autoPreviewBlockedKey) {
+      cancelAutoFetchDebounce();
+      return;
+    }
+    scheduleAutoFetchDebounce(primary, (p) => void runFetchPreview(p, addToast));
+    return () => cancelAutoFetchDebounce();
+  }, [url, mode, downloading, loadingInfo, autoPreviewBlockedKey, runFetchPreview, addToast]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) {
-        setUrl(mode === "multi" ? text : text.trim());
-        setPreview(null);
-        setArchiveJob(null);
-        setSingleJob(null);
-        setActiveJobId(null);
-        setFormError(null);
-      }
+      if (text) pasteFromClipboardStore(text);
     } catch {
-      setFormError("Clipboard access denied or empty");
+      addToast("Clipboard access denied or empty", { type: "warning" });
     }
-  }, [mode]);
+  }, [addToast, pasteFromClipboardStore]);
 
   return (
     <div className="mx-auto max-w-[780px] px-5 pb-16 pt-10">
@@ -381,14 +275,7 @@ export default function HomePage() {
             type="button"
             role="tab"
             aria-selected={mode === key}
-            onClick={() => {
-              setMode(key);
-              setFormError(null);
-              setPreview(null);
-              setArchiveJob(null);
-              setSingleJob(null);
-              setActiveJobId(null);
-            }}
+            onClick={() => setMode(key)}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-[9px] px-3 py-2 text-[13px] font-medium transition"
             style={
               mode === key
@@ -406,8 +293,14 @@ export default function HomePage() {
 
       {!preview ? (
         <div
-          className="mb-4 rounded-[var(--vok-radius-lg)] border p-6"
-          style={{ background: "var(--vok-surface)", borderColor: "var(--vok-border)" }}
+          className="mb-4 rounded-[var(--vok-radius-lg)] border p-6 transition-opacity duration-200"
+          style={{
+            background: "var(--vok-surface)",
+            borderColor: "var(--vok-border)",
+            opacity: loadingInfo ? 0.92 : 1,
+          }}
+          aria-busy={loadingInfo}
+          aria-live="polite"
         >
           <div
             className="mb-3 text-[11px] font-semibold uppercase tracking-wider"
@@ -422,14 +315,7 @@ export default function HomePage() {
                   placeholder={modePlaceholder(mode)}
                   value={url}
                   rows={5}
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    setPreview(null);
-                    setArchiveJob(null);
-                    setSingleJob(null);
-                    setActiveJobId(null);
-                    setFormError(null);
-                  }}
+                  onChange={(e) => onUrlInputChange(e.target.value)}
                   disabled={downloading || loadingInfo}
                   className="min-h-[120px] w-full resize-y rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] leading-relaxed outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
                   style={{
@@ -449,14 +335,7 @@ export default function HomePage() {
                   type="url"
                   placeholder={modePlaceholder(mode)}
                   value={url}
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    setPreview(null);
-                    setArchiveJob(null);
-                    setSingleJob(null);
-                    setActiveJobId(null);
-                    setFormError(null);
-                  }}
+                  onChange={(e) => onUrlInputChange(e.target.value)}
                   disabled={downloading || loadingInfo}
                   className="min-h-[46px] w-full rounded-[var(--vok-radius)] py-3 pl-4 pr-12 text-[14px] outline-none transition-[border-color] placeholder:text-[var(--vok-muted2)] disabled:opacity-50"
                   style={{
@@ -494,16 +373,17 @@ export default function HomePage() {
             </div>
             <button
               type="button"
-              onClick={() => void fetchInfo()}
+              onClick={() => fetchInfoManual(addToast)}
               disabled={
                 downloading ||
                 loadingInfo ||
                 (mode === "multi" ? parseUrls(url).length === 0 : !url.trim())
               }
-              className="min-h-[46px] shrink-0 self-start rounded-[var(--vok-radius)] px-5 text-[14px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50 sm:px-6"
+              className="flex min-h-[46px] shrink-0 items-center justify-center gap-2 self-start rounded-[var(--vok-radius)] px-5 text-[14px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50 sm:min-w-[7.5rem] sm:px-6"
               style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
             >
-              {loadingInfo ? "Fetching…" : "Fetch"}
+              {loadingInfo ? <Spinner /> : null}
+              {loadingInfo ? "Fetching" : "Fetch"}
             </button>
           </div>
           {mode === "multi" ? (
@@ -519,49 +399,6 @@ export default function HomePage() {
             </p>
           ) : null}
         </div>
-      ) : (
-        <div
-          className="mb-4 flex flex-col gap-2 rounded-[var(--vok-radius-lg)] border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-          style={{ background: "var(--vok-surface2)", borderColor: "var(--vok-border)" }}
-        >
-          <p className="min-w-0 text-[13px] leading-snug" style={{ color: "var(--vok-text)" }}>
-            <span className="font-medium" style={{ color: "var(--vok-muted)" }}>
-              Loaded
-            </span>{" "}
-            <span className="line-clamp-2 break-all">{preview.title ?? url.trim()}</span>
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setPreview(null);
-              setFormError(null);
-              setSelectedFormatId("");
-              setSingleJob(null);
-              setArchiveJob(null);
-            }}
-            className="shrink-0 rounded-[var(--vok-radius)] border px-3 py-2 text-[13px] font-medium transition hover:opacity-90"
-            style={{
-              borderColor: "var(--vok-border2)",
-              color: "var(--vok-muted)",
-              background: "var(--vok-surface3)",
-            }}
-          >
-            Change URL
-          </button>
-        </div>
-      )}
-
-      {formError ? (
-        <p
-          className="mb-4 rounded-[var(--vok-radius)] border px-3 py-2 text-sm"
-          style={{
-            borderColor: "rgba(255,107,107,0.35)",
-            background: "rgba(255,107,107,0.08)",
-            color: "var(--vok-red)",
-          }}
-        >
-          {formError}
-        </p>
       ) : null}
 
       {preview ? (
@@ -570,7 +407,8 @@ export default function HomePage() {
             preview={preview}
             selectedFormatId={selectedFormatId}
             onSelectFormat={setSelectedFormatId}
-            onDownload={() => void runDownload()}
+            onDownload={() => void runDownload(addToast)}
+            onChangeUrl={clearPreviewSession}
             downloading={downloading}
             downloadProgress={
               mode === "single" && singleJob
@@ -586,14 +424,13 @@ export default function HomePage() {
                   ? "Download ZIP (playlist / channel)"
                   : undefined
             }
+            singleDownloadCompleted={
+              mode === "single" &&
+              !downloading &&
+              (singleJob?.status ?? "").toLowerCase() === "completed"
+            }
           />
         </>
-      ) : null}
-
-      {loadingInfo ? (
-        <p className="mb-4 text-center text-xs" style={{ color: "var(--vok-muted)" }} aria-live="polite">
-          Querying media metadata…
-        </p>
       ) : null}
 
       {preview && mode !== "single" ? (
@@ -654,7 +491,7 @@ export default function HomePage() {
                 {!downloading ? (
                   <button
                     type="button"
-                    onClick={() => setArchiveJob(null)}
+                    onClick={() => clearArchiveJob()}
                     className="mt-3 rounded-[var(--vok-radius)] border px-3 py-2 text-[12px] font-medium transition hover:opacity-90"
                     style={{
                       borderColor: "var(--vok-border2)",

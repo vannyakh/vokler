@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -23,6 +24,13 @@ class DownloadCreate(BaseModel):
         if len(key) > 500:
             raise ValueError("Format selector too long")
         return key
+
+
+class JobFileDownloadLink(BaseModel):
+    """How the browser should obtain the file (avoids fetch→302 to R2 CORS failures)."""
+
+    mode: Literal["redirect", "blob"]
+    url: str
 
 
 class JobPublic(BaseModel):

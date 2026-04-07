@@ -1,0 +1,325 @@
+import { create } from "zustand";
+
+import {
+  apiFetch,
+  downloadArchiveFileToBrowser,
+  downloadJobFileToBrowser,
+  type ArchiveJobDto,
+  type JobDto,
+  type PreviewResponseDto,
+  previewBundleMedia,
+  previewMedia,
+} from "@/lib/api";
+import { safeDownloadFilename, safeZipFilename } from "@/lib/download/filenames";
+import { looksLikeHttpUrl, parseUrls } from "@/lib/download/urlHelpers";
+
+export type DownloadMode = "single" | "multi" | "playlist" | "profile";
+
+export type ToastFn = (
+  message: string,
+  options?: { type?: "error" | "success" | "warning"; duration?: number },
+) => void;
+
+const POLL_MS = 2000;
+
+export const AUTO_FETCH_DEBOUNCE_MS = 480;
+
+let fetchGeneration = 0;
+let autoFetchTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function cancelAutoFetchDebounce(): void {
+  if (autoFetchTimer) {
+    clearTimeout(autoFetchTimer);
+    autoFetchTimer = null;
+  }
+}
+
+export function scheduleAutoFetchDebounce(
+  primary: string,
+  run: (p: string) => void,
+  delayMs: number = AUTO_FETCH_DEBOUNCE_MS,
+): void {
+  cancelAutoFetchDebounce();
+  autoFetchTimer = setTimeout(() => {
+    autoFetchTimer = null;
+    run(primary);
+  }, delayMs);
+}
+
+type DownloadState = {
+  mode: DownloadMode;
+  url: string;
+  sourceUrl: string | null;
+  preview: PreviewResponseDto | null;
+  selectedFormatId: string;
+  loadingInfo: boolean;
+  autoPreviewBlockedKey: string | null;
+  archiveJob: ArchiveJobDto | null;
+  singleJob: JobDto | null;
+  activeJobId: string | null;
+  downloading: boolean;
+};
+
+type DownloadActions = {
+  setMode: (mode: DownloadMode) => void;
+  setUrl: (url: string) => void;
+  onUrlInputChange: (url: string) => void;
+  setSelectedFormatId: (id: string) => void;
+  clearArchiveJob: () => void;
+  clearPreviewSession: () => void;
+  resetJobsOnly: () => void;
+
+  patchSingleJobIfMatch: (jobId: string, patch: Partial<JobDto>) => void;
+  setSingleJob: (job: JobDto | null) => void;
+  setArchiveJob: (job: ArchiveJobDto | null) => void;
+  setActiveJobId: (id: string | null) => void;
+  setDownloading: (v: boolean) => void;
+
+  fetchInfoManual: (addToast: ToastFn) => void;
+  runFetchPreview: (primary: string, addToast: ToastFn) => Promise<void>;
+  runDownload: (addToast: ToastFn) => Promise<void>;
+  pasteFromClipboard: (text: string) => void;
+};
+
+export type DownloadStore = DownloadState & DownloadActions;
+
+const initialJobs = {
+  archiveJob: null as ArchiveJobDto | null,
+  singleJob: null as JobDto | null,
+  activeJobId: null as string | null,
+};
+
+export function autoPreviewAttemptKey(mode: DownloadMode, primary: string): string {
+  return `${mode}:${primary.trim()}`;
+}
+
+export const useDownloadStore = create<DownloadStore>((set, get) => ({
+  mode: "single",
+  url: "",
+  sourceUrl: null,
+  preview: null,
+  selectedFormatId: "",
+  loadingInfo: false,
+  autoPreviewBlockedKey: null,
+  ...initialJobs,
+  downloading: false,
+
+  setMode: (mode) =>
+    set({
+      mode,
+      preview: null,
+      sourceUrl: null,
+      selectedFormatId: "",
+      autoPreviewBlockedKey: null,
+      ...initialJobs,
+    }),
+
+  setUrl: (url) => set({ url }),
+
+  onUrlInputChange: (url) =>
+    set({
+      url,
+      preview: null,
+      sourceUrl: null,
+      autoPreviewBlockedKey: null,
+      ...initialJobs,
+    }),
+
+  setSelectedFormatId: (selectedFormatId) => set({ selectedFormatId }),
+
+  clearArchiveJob: () => set({ archiveJob: null }),
+
+  clearPreviewSession: () =>
+    set({
+      preview: null,
+      sourceUrl: null,
+      selectedFormatId: "",
+      autoPreviewBlockedKey: null,
+      singleJob: null,
+      archiveJob: null,
+    }),
+
+  resetJobsOnly: () => set({ ...initialJobs }),
+
+  patchSingleJobIfMatch: (jobId, patch) =>
+    set((s) => ({
+      singleJob:
+        s.singleJob?.id === jobId ? ({ ...s.singleJob, ...patch } as JobDto) : s.singleJob,
+    })),
+
+  setSingleJob: (singleJob) => set({ singleJob }),
+  setArchiveJob: (archiveJob) => set({ archiveJob }),
+  setActiveJobId: (activeJobId) => set({ activeJobId }),
+  setDownloading: (downloading) => set({ downloading }),
+
+  fetchInfoManual: (addToast) => {
+    cancelAutoFetchDebounce();
+    const { mode, url } = get();
+    const primary = mode === "multi" ? parseUrls(url)[0] : url.trim();
+    if (!primary) return;
+    if (mode !== "multi" && !looksLikeHttpUrl(primary)) {
+      addToast("Enter a valid http(s) link", { type: "warning" });
+      return;
+    }
+    void get().runFetchPreview(primary, addToast);
+  },
+
+  runFetchPreview: async (primary, addToast) => {
+    if (get().downloading) return;
+    const gen = ++fetchGeneration;
+    const mode = get().mode;
+    set({
+      preview: null,
+      sourceUrl: null,
+      archiveJob: null,
+      singleJob: null,
+      activeJobId: null,
+      loadingInfo: true,
+    });
+    try {
+      const data =
+        mode === "playlist" || mode === "profile"
+          ? await previewBundleMedia(primary)
+          : await previewMedia(primary);
+      if (gen !== fetchGeneration) return;
+      const updates: Partial<DownloadState> = {
+        preview: data,
+        autoPreviewBlockedKey: null,
+      };
+      if (mode !== "multi") {
+        const canonical =
+          mode === "playlist" || mode === "profile"
+            ? primary.trim()
+            : (data.webpage_url && data.webpage_url.trim()) || primary.trim();
+        updates.sourceUrl = canonical;
+        updates.url = "";
+      }
+      const def =
+        data.recommended_format &&
+        data.formats.some((f) => f.format_id === data.recommended_format)
+          ? data.recommended_format
+          : data.formats[0]?.format_id ?? "";
+      updates.selectedFormatId = def;
+      set(updates);
+    } catch (e) {
+      if (gen !== fetchGeneration) return;
+      addToast(e instanceof Error ? e.message : "Could not load video info", { type: "error" });
+      set({ autoPreviewBlockedKey: autoPreviewAttemptKey(mode, primary) });
+    } finally {
+      if (gen === fetchGeneration) {
+        set({ loadingInfo: false });
+      }
+    }
+  },
+
+  runDownload: async (addToast) => {
+    const st = get();
+    const { selectedFormatId, mode, url, sourceUrl, preview } = st;
+    if (!selectedFormatId) return;
+
+    const batch = mode === "multi" || mode === "playlist" || mode === "profile";
+
+    if (!batch) {
+      const one = (sourceUrl ?? url).trim();
+      if (!one) return;
+      st.setDownloading(true);
+      st.setSingleJob(null);
+      try {
+        const created = await apiFetch<JobDto>("/download", {
+          method: "POST",
+          body: JSON.stringify({ url: one, format: selectedFormatId }),
+        });
+        st.setSingleJob(created);
+        st.setActiveJobId(created.id);
+        let last = created;
+        while (!["completed", "failed"].includes(last.status)) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          last = await apiFetch<JobDto>(`/jobs/${created.id}`);
+          st.setSingleJob(last);
+        }
+        if (last.status === "failed") {
+          addToast(last.error_message ?? "Download failed", { type: "error", duration: 6000 });
+          st.setSingleJob(null);
+          return;
+        }
+        last = await apiFetch<JobDto>(`/jobs/${created.id}`);
+        st.setSingleJob(last);
+        await downloadJobFileToBrowser(last, safeDownloadFilename(preview?.title));
+        addToast("Video ready — check the new tab or your downloads folder", { type: "success" });
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Download failed", { type: "error", duration: 6000 });
+        st.setSingleJob(null);
+      } finally {
+        st.setDownloading(false);
+        st.setActiveJobId(null);
+      }
+      return;
+    }
+
+    let body: Record<string, unknown>;
+    if (mode === "multi") {
+      const urls = parseUrls(url);
+      if (urls.length === 0) return;
+      body = {
+        urls,
+        format: selectedFormatId,
+        label: preview?.title ?? null,
+      };
+    } else {
+      const one = (sourceUrl ?? url).trim();
+      if (!one) return;
+      body = {
+        url: one,
+        expand_flat: true,
+        format: selectedFormatId,
+        label: preview?.title ?? null,
+      };
+    }
+
+    st.setDownloading(true);
+    st.setArchiveJob(null);
+    try {
+      const created = await apiFetch<ArchiveJobDto>("/download/archive", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      st.setArchiveJob(created);
+      let last = created;
+      while (!["completed", "failed"].includes(last.status)) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        last = await apiFetch<ArchiveJobDto>(`/archive/${created.id}`);
+        st.setArchiveJob(last);
+      }
+      if (last.status === "failed") {
+        addToast(last.error_message ?? "Archive failed", { type: "error", duration: 6000 });
+        return;
+      }
+      await downloadArchiveFileToBrowser(created.id, safeZipFilename(preview?.title));
+      addToast("ZIP ready — check the new tab or your downloads folder", { type: "success" });
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Download failed", { type: "error", duration: 6000 });
+    } finally {
+      st.setDownloading(false);
+    }
+  },
+
+  pasteFromClipboard: (text: string) => {
+    const mode = get().mode;
+    if (!text) return;
+    set({
+      url: mode === "multi" ? text : text.trim(),
+      preview: null,
+      sourceUrl: null,
+      autoPreviewBlockedKey: null,
+      ...initialJobs,
+    });
+  },
+}));
+
+export function selectAllUrls(state: Pick<DownloadStore, "mode" | "url" | "sourceUrl">): string[] {
+  if (state.mode === "multi") return parseUrls(state.url);
+  if (state.sourceUrl) return [state.sourceUrl];
+  const one = state.url.trim();
+  return one ? [one] : [];
+}
+

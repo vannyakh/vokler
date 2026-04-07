@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
@@ -30,7 +31,7 @@ class ArchiveCreate(BaseModel):
         return key
 
     @model_validator(mode="after")
-    def urls_or_expand(self) -> ArchiveCreate:
+    def urls_or_expand(self) -> Self:
         if self.expand_flat:
             u = str(self.url or "").strip()
             if not u:

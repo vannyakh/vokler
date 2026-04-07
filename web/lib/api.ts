@@ -14,6 +14,24 @@ function accessToken(): string | null {
   return localStorage.getItem("vokler_access_token");
 }
 
+/**
+ * Must match API `FRONTEND_APP_KEY` when the API enforces app key access.
+ * Next.js only exposes `NEXT_PUBLIC_*` to the browser; server-only `FRONTEND_APP_KEY` in `.env`
+ * is not available here — set `NEXT_PUBLIC_FRONTEND_APP_KEY` for direct API calls, or use
+ * `NEXT_PUBLIC_USE_PROXY=true` and put the key in server `FRONTEND_APP_KEY` (proxy injects it).
+ */
+function frontendAppKey(): string | null {
+  const k =
+    process.env.NEXT_PUBLIC_FRONTEND_APP_KEY ??
+    process.env.NEXT_PUBLIC_APP_KEY;
+  return k && k.length > 0 ? k : null;
+}
+
+function applyAppKey(headers: Headers): void {
+  const k = frontendAppKey();
+  if (k) headers.set("X-App-Key", k);
+}
+
 /** Build request URL: direct FastAPI or same-origin proxy (`/api/proxy?forward=...`). */
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -63,6 +81,14 @@ export type MediaFormatRowDto = {
   tbr: number | null;
 };
 
+export type BundlePreviewItemDto = {
+  url: string;
+  title: string;
+  thumbnail: string | null;
+  duration_seconds: number | null;
+  duration_label: string | null;
+};
+
 export type PreviewResponseDto = {
   title: string | null;
   duration_seconds: number | null;
@@ -72,6 +98,8 @@ export type PreviewResponseDto = {
   webpage_url: string | null;
   recommended_format: string | null;
   formats: MediaFormatRowDto[];
+  bundle_title?: string | null;
+  bundle_items?: BundlePreviewItemDto[];
 };
 
 export async function previewMedia(url: string): Promise<PreviewResponseDto> {
@@ -81,28 +109,73 @@ export async function previewMedia(url: string): Promise<PreviewResponseDto> {
   });
 }
 
+/** Playlist / channel / profile: formats from first item + full entry list for UI rows. */
+export async function previewBundleMedia(url: string): Promise<PreviewResponseDto> {
+  return apiFetch<PreviewResponseDto>("/preview/bundle", {
+    method: "POST",
+    body: JSON.stringify({ url: url.trim() }),
+  });
+}
+
+type JobFileDownloadLinkDto = { mode: "redirect" | "blob"; url: string };
+
+function apiAuthHeaders(): Headers {
+  const headers = new Headers();
+  applyAppKey(headers);
+  const token = accessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
+
+function readErrorDetail(text: string): string {
+  let detail = text;
+  try {
+    const j = JSON.parse(text) as { detail?: unknown };
+    if (typeof j.detail === "string") detail = j.detail;
+    else if (Array.isArray(j.detail)) detail = JSON.stringify(j.detail);
+  } catch {
+    /* ignore */
+  }
+  return detail;
+}
+
+/** Presigned / public URLs: open in a new tab so the browser does not follow 302 with fetch (R2 CORS). */
+function openExternalDownload(url: string, fallbackFilename: string): void {
+  const filename =
+    fallbackFilename.replace(/[^\w.\-()\s[\]]/g, "_").trim() || "download";
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function fetchDownloadLinkJson(path: string): Promise<JobFileDownloadLinkDto> {
+  const res = await fetch(apiUrl(path), { headers: apiAuthHeaders() });
+  if (!res.ok) {
+    throw new Error(readErrorDetail(await res.text()) || `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<JobFileDownloadLinkDto>;
+}
+
 /** Fetch finished archive ZIP and trigger the browser Save / Downloads UI. */
 export async function downloadArchiveFileToBrowser(
   archiveId: string,
   fallbackFilename: string,
 ): Promise<void> {
-  const headers = new Headers();
-  const token = accessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+  const link = await fetchDownloadLinkJson(`/files/archive/${archiveId}/download-link`);
+  if (link.mode === "redirect") {
+    openExternalDownload(link.url, fallbackFilename || "download.zip");
+    return;
   }
-  const res = await fetch(apiUrl(`/files/archive/${archiveId}`), { headers });
+  const res = await fetch(apiUrl(link.url), { headers: apiAuthHeaders() });
   if (!res.ok) {
-    const text = await res.text();
-    let detail = text;
-    try {
-      const j = JSON.parse(text) as { detail?: unknown };
-      if (typeof j.detail === "string") detail = j.detail;
-      else if (Array.isArray(j.detail)) detail = JSON.stringify(j.detail);
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${res.status} ${res.statusText}`);
+    throw new Error(readErrorDetail(await res.text()) || `${res.status} ${res.statusText}`);
   }
   const cd = res.headers.get("Content-Disposition");
   let filename = fallbackFilename.replace(/[^\w.\-()\s[\]]/g, "_").trim() || "download.zip";
@@ -126,30 +199,34 @@ export async function downloadArchiveFileToBrowser(
   URL.revokeObjectURL(url);
 }
 
-/** Fetch finished job file and trigger the browser Save / Downloads UI. */
+/** Public / R2 HTTPS artifact: open directly (avoids `/files/.../download-link`). */
+function isDirectHttpResultPath(path: string | null | undefined): path is string {
+  const p = (path ?? "").trim();
+  return p.startsWith("https://") || p.startsWith("http://");
+}
+
+/**
+ * After a single job completes, prefer ``GET /jobs/{id}``’s ``result_path`` when it is already
+ * a public HTTPS URL; otherwise fall back to ``/files/{id}/download-link`` (local disk / presigned).
+ */
 export async function downloadJobFileToBrowser(
-  jobId: string,
+  job: JobDto,
   fallbackFilename: string,
 ): Promise<void> {
-  const headers = new Headers();
-  const token = accessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+  const completed = (job.status || "").toLowerCase() === "completed";
+  if (completed && isDirectHttpResultPath(job.result_path)) {
+    openExternalDownload(job.result_path.trim(), fallbackFilename || "download.bin");
+    return;
   }
-  const res = await fetch(apiUrl(`/files/${jobId}`), { headers });
+
+  const link = await fetchDownloadLinkJson(`/files/${job.id}/download-link`);
+  if (link.mode === "redirect") {
+    openExternalDownload(link.url, fallbackFilename || "download.bin");
+    return;
+  }
+  const res = await fetch(apiUrl(link.url), { headers: apiAuthHeaders() });
   if (!res.ok) {
-    const text = await res.text();
-    let detail = text;
-    try {
-      const j = JSON.parse(text) as { detail?: unknown };
-      if (typeof j.detail === "string") detail = j.detail;
-      else if (Array.isArray(j.detail)) detail = JSON.stringify(j.detail);
-    } catch {
-      /* ignore */
-    }
-    throw new Error(
-      detail || `${res.status} ${res.statusText}`,
-    );
+    throw new Error(readErrorDetail(await res.text()) || `${res.status} ${res.statusText}`);
   }
   const cd = res.headers.get("Content-Disposition");
   let filename = fallbackFilename.replace(/[^\w.\-()\s[\]]/g, "_").trim() || "download.bin";
@@ -181,6 +258,7 @@ export async function apiFetch<T>(
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  applyAppKey(headers);
   const token = accessToken();
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
@@ -189,7 +267,7 @@ export async function apiFetch<T>(
   const res = await fetch(apiUrl(path), { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `${res.status} ${res.statusText}`);
+    throw new Error(readErrorDetail(text) || `${res.status} ${res.statusText}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -204,5 +282,7 @@ export function setAccessToken(token: string | null): void {
 /** WebSocket URL (direct to FastAPI). Configure CORS / mixed-content for your deploy. */
 export function wsUrlForJob(jobId: string): string {
   const base = publicBase().replace(/^http/, "ws");
-  return `${base}/ws/jobs/${jobId}`;
+  const k = frontendAppKey();
+  const q = k ? `?app_key=${encodeURIComponent(k)}` : "";
+  return `${base}/ws/jobs/${jobId}${q}`;
 }

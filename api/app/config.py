@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    frontend_app_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("FRONTEND_APP_KEY", "APP_FRONTEND_KEY"),
+        description="If non-empty, browsers and other clients must send header X-App-Key with this value "
+        "(WebSocket may use query app_key=… or the same header). GET /health and OPTIONS are exempt.",
+    )
     cors_origins: list[str] = Field(
         default_factory=lambda: list(_DEFAULT_CORS),
         description="Allowed browser origins (comma-separated in env CORS_ORIGINS).",
@@ -33,6 +39,11 @@ class Settings(BaseSettings):
         default=True,
         description='If True and app_env is development, also allow http(s)://localhost and 127.0.0.1 on any port.',
     )
+
+    @field_validator("frontend_app_key", mode="after")
+    @classmethod
+    def strip_frontend_app_key(cls, v: str) -> str:
+        return (v or "").strip()
 
     @field_validator("cors_origins", mode="before")
     @classmethod

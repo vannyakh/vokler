@@ -5,6 +5,7 @@ import Script from "next/script";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 
 import "./globals.css";
+import { ToastProvider } from "@/components/ui/toast/Toast";
 
 /** Syne — UI / headings (Google Fonts: 400–700). */
 const fontSans = Syne({
@@ -41,10 +42,11 @@ export default function RootLayout({
       className={`${fontSans.variable} ${fontMono.variable} h-full antialiased`}
     >
       <body className="min-h-full overflow-x-hidden font-sans">
-        <Script id="vokler-theme-init" strategy="beforeInteractive">
-          {themeInit}
-        </Script>
-        {children}
+        <ToastProvider>
+        {/* <Script id="vokler-theme-init" strategy="beforeInteractive"> */}
+          {children}
+        {/* </Script> */}
+          </ToastProvider>
       </body>
     </html>
   );

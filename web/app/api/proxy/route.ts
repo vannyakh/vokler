@@ -44,6 +44,11 @@ async function proxy(request: NextRequest, method: string) {
     headers.set(key, value);
   });
 
+  const upstreamAppKey = process.env.FRONTEND_APP_KEY ?? process.env.API_FRONTEND_APP_KEY;
+  if (upstreamAppKey) {
+    headers.set("X-App-Key", upstreamAppKey);
+  }
+
   const hasBody = !["GET", "HEAD"].includes(method);
   const body = hasBody ? await request.arrayBuffer() : undefined;
 

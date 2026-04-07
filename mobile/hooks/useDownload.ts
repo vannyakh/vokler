@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isAxiosError } from "axios";
+import Constants from "expo-constants";
 
 import type { DownloadFormat } from "@/components/FormatPicker";
 import { api, getApiBaseUrl } from "@/lib/api";
@@ -31,7 +32,11 @@ function toApiFormat(f: DownloadFormat): string {
 
 function wsUrlForJob(jobId: string): string {
   const base = getApiBaseUrl().replace(/^http/, "ws").replace(/\/$/, "");
-  return `${base}/ws/jobs/${jobId}`;
+  const appKey =
+    process.env.EXPO_PUBLIC_FRONTEND_APP_KEY ||
+    (Constants.expoConfig?.extra as { frontendAppKey?: string } | undefined)?.frontendAppKey;
+  const q = appKey ? `?app_key=${encodeURIComponent(appKey)}` : "";
+  return `${base}/ws/jobs/${jobId}${q}`;
 }
 
 export function useDownload() {
