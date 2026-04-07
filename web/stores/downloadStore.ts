@@ -10,7 +10,12 @@ import {
   previewMedia,
 } from "@/lib/api";
 import { safeDownloadFilename, safeZipFilename } from "@/lib/download/filenames";
-import { looksLikeHttpUrl, parseUrls } from "@/lib/download/urlHelpers";
+import {
+  looksLikeHttpUrl,
+  parseUrls,
+  previewModeMismatchMessage,
+} from "@/lib/download/urlHelpers";
+import { DEFAULT_PRESET_FORMAT_ID } from "@/lib/previewFormats";
 
 export type DownloadMode = "single" | "multi" | "playlist" | "profile";
 
@@ -160,13 +165,24 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
       addToast("Enter a valid http(s) link", { type: "warning" });
       return;
     }
+    const mismatch = previewModeMismatchMessage(mode, primary);
+    if (mismatch) {
+      addToast(mismatch, { type: "warning", duration: 6000 });
+      return;
+    }
     void get().runFetchPreview(primary, addToast);
   },
 
   runFetchPreview: async (primary, addToast) => {
     if (get().downloading) return;
-    const gen = ++fetchGeneration;
     const mode = get().mode;
+    const mismatch = previewModeMismatchMessage(mode, primary);
+    if (mismatch) {
+      addToast(mismatch, { type: "warning", duration: 6000 });
+      set({ autoPreviewBlockedKey: autoPreviewAttemptKey(mode, primary) });
+      return;
+    }
+    const gen = ++fetchGeneration;
     set({
       preview: null,
       sourceUrl: null,
@@ -194,10 +210,12 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         updates.url = "";
       }
       const def =
-        data.recommended_format &&
-        data.formats.some((f) => f.format_id === data.recommended_format)
-          ? data.recommended_format
-          : data.formats[0]?.format_id ?? "";
+        data.formats.length === 0
+          ? DEFAULT_PRESET_FORMAT_ID
+          : data.recommended_format &&
+              data.formats.some((f) => f.format_id === data.recommended_format)
+            ? data.recommended_format
+            : data.formats[0]?.format_id ?? "";
       updates.selectedFormatId = def;
       set(updates);
     } catch (e) {
@@ -213,7 +231,10 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
 
   runDownload: async (addToast) => {
     const st = get();
-    const { selectedFormatId, mode, url, sourceUrl, preview } = st;
+    const { mode, url, sourceUrl, preview } = st;
+    const selectedFormatId =
+      st.selectedFormatId ||
+      (!preview?.formats?.length ? DEFAULT_PRESET_FORMAT_ID : "");
     if (!selectedFormatId) return;
 
     const batch = mode === "multi" || mode === "playlist" || mode === "profile";

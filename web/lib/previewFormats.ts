@@ -78,6 +78,56 @@ function formatSizeHint(filesize: number | null | undefined): string | null {
   return `${(filesize / (1024 * 1024)).toFixed(filesize < 10_485_760 ? 1 : 1)} MB`;
 }
 
+/** Preset keys accepted by the API when no per-format table was returned (see ``FORMAT_MAP``). */
+export const DEFAULT_PRESET_FORMAT_ID = "original" as const;
+
+function buildPresetFormatMenuEntries(): DownloadMenuEntry[] {
+  return [
+    {
+      format_id: DEFAULT_PRESET_FORMAT_ID,
+      category: "video_audio",
+      title: "Best quality (default)",
+      hint: "yt-dlp best merge",
+      isRecommended: true,
+    },
+    {
+      format_id: "mp4_1080p",
+      category: "video_audio",
+      title: "MP4 up to 1080p",
+      hint: null,
+      isRecommended: false,
+    },
+    {
+      format_id: "mp4_720p",
+      category: "video_audio",
+      title: "MP4 up to 720p",
+      hint: null,
+      isRecommended: false,
+    },
+    {
+      format_id: "mp4_480p",
+      category: "video_audio",
+      title: "MP4 up to 480p",
+      hint: null,
+      isRecommended: false,
+    },
+    {
+      format_id: "mp3_320",
+      category: "audio",
+      title: "MP3 320 kb/s",
+      hint: null,
+      isRecommended: false,
+    },
+    {
+      format_id: "mp3_192",
+      category: "audio",
+      title: "MP3 192 kb/s",
+      hint: null,
+      isRecommended: false,
+    },
+  ];
+}
+
 /**
  * Builds a SaveFrom-style ordered list: video+audio, then audio-only, then video-only.
  * One entry per resolution/ext bucket where possible.
@@ -86,7 +136,7 @@ export function buildDownloadMenuEntries(
   formats: MediaFormatRowDto[],
   recommended_format: string | null,
 ): DownloadMenuEntry[] {
-  if (formats.length === 0) return [];
+  if (formats.length === 0) return buildPresetFormatMenuEntries();
 
   const vaPool = dedupeVideoPool(
     formats.filter(isVideoWithAudioRow),
