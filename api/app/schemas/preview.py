@@ -1,8 +1,16 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, HttpUrl
+
+PreviewRequestType = Literal["video", "playlist", "profile"]
 
 
 class PreviewRequest(BaseModel):
     url: HttpUrl | str = Field(..., description="Video or stream URL")
+    type: PreviewRequestType | None = Field(
+        default=None,
+        description="playlist | profile: flat bundle preview with bundle_items; omit or video: single item",
+    )
 
 
 class MediaFormatRow(BaseModel):

@@ -26,7 +26,7 @@ from app.schemas.preview import (
 )
 from app.services.downloader import extract_flat_entries, extract_flat_urls, extract_preview
 from app.services.storage import parse_s3_uri, presigned_get_url_async
-from app.services.url_parser import detect_platform
+from app.services.url_parser import detect_platform, url_suggests_youtube_bundle_preview
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -139,25 +139,8 @@ async def _artifact_response_from_result_path(
     )
 
 
-@router.post("/preview", response_model=PreviewResponse)
-async def preview_media(body: PreviewRequest):
-    url = str(body.url).strip()
-    try:
-        data = await extract_preview(url)
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-    format_rows = data.pop("formats")
-    formats = [MediaFormatRow.model_validate(f) for f in format_rows]
-    return PreviewResponse(**data, formats=formats)
-
-
-@router.post("/preview/bundle", response_model=BundlePreviewResponse)
-async def preview_bundle(body: PreviewRequest):
+async def _bundle_preview_response(url: str) -> BundlePreviewResponse:
     """Playlist / channel / profile: list all entries + format table from the first video."""
-    url = str(body.url).strip()
     try:
         items_raw, bundle_title = await extract_flat_entries(url)
     except RuntimeError as e:
@@ -198,6 +181,46 @@ async def preview_bundle(body: PreviewRequest):
         **data,
         formats=formats,
     )
+
+
+def _use_bundle_preview(body: PreviewRequest, url: str) -> bool:
+    """Explicit ``playlist`` / ``profile``, or YouTube playlist/tab URLs when ``type`` is omitted."""
+    if body.type in ("playlist", "profile"):
+        return True
+    if body.type == "video":
+        return False
+    return url_suggests_youtube_bundle_preview(url)
+
+
+@router.post("/preview", response_model=BundlePreviewResponse)
+async def preview_media(body: PreviewRequest):
+    """Single video by default; use ``type`` or YouTube URL shape to get ``bundle_items`` + formats."""
+    url = str(body.url).strip()
+    if _use_bundle_preview(body, url):
+        return await _bundle_preview_response(url)
+    try:
+        data = await extract_preview(url)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    format_rows = data.pop("formats")
+    formats = [MediaFormatRow.model_validate(f) for f in format_rows]
+    base = PreviewResponse(**data, formats=formats)
+    dumped = base.model_dump()
+    return BundlePreviewResponse(
+        bundle_title=None,
+        bundle_items=[],
+        **dumped,
+    )
+
+
+@router.post("/preview/bundle", response_model=BundlePreviewResponse)
+async def preview_bundle(body: PreviewRequest):
+    """Backward-compatible alias; prefer ``POST /preview`` with ``type``: ``playlist`` or ``profile``."""
+    url = str(body.url).strip()
+    return await _bundle_preview_response(url)
 
 
 @router.post("/download", response_model=JobPublic, status_code=status.HTTP_202_ACCEPTED)

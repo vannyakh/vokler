@@ -7,7 +7,6 @@ import {
   type ArchiveJobDto,
   type JobDto,
   type PreviewResponseDto,
-  previewBundleMedia,
   previewMedia,
 } from "@/lib/api";
 import { safeDownloadFilename, safeZipFilename } from "@/lib/download/filenames";
@@ -177,10 +176,10 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
       loadingInfo: true,
     });
     try {
-      const data =
-        mode === "playlist" || mode === "profile"
-          ? await previewBundleMedia(primary)
-          : await previewMedia(primary);
+      const data = await previewMedia(
+        primary,
+        mode === "playlist" ? "playlist" : mode === "profile" ? "profile" : undefined,
+      );
       if (gen !== fetchGeneration) return;
       const updates: Partial<DownloadState> = {
         preview: data,

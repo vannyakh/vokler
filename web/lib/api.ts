@@ -14,12 +14,6 @@ function accessToken(): string | null {
   return localStorage.getItem("vokler_access_token");
 }
 
-/**
- * Must match API `FRONTEND_APP_KEY` when the API enforces app key access.
- * Next.js only exposes `NEXT_PUBLIC_*` to the browser; server-only `FRONTEND_APP_KEY` in `.env`
- * is not available here — set `NEXT_PUBLIC_FRONTEND_APP_KEY` for direct API calls, or use
- * `NEXT_PUBLIC_USE_PROXY=true` and put the key in server `FRONTEND_APP_KEY` (proxy injects it).
- */
 function frontendAppKey(): string | null {
   const k =
     process.env.NEXT_PUBLIC_FRONTEND_APP_KEY ??
@@ -102,18 +96,24 @@ export type PreviewResponseDto = {
   bundle_items?: BundlePreviewItemDto[];
 };
 
-export async function previewMedia(url: string): Promise<PreviewResponseDto> {
+/** Matches API ``PreviewRequest.type``: bundle preview for playlist / channel tabs. */
+export type PreviewRequestType = "video" | "playlist" | "profile";
+
+/**
+ * Preview metadata. Pass ``type`` ``playlist`` or ``profile`` so the API returns ``bundle_items``
+ * (flat list + formats from the first video). Omit or ``video`` for a single URL.
+ */
+export async function previewMedia(
+  url: string,
+  type?: PreviewRequestType | null,
+): Promise<PreviewResponseDto> {
+  const payload: { url: string; type?: PreviewRequestType } = { url: url.trim() };
+  if (type === "playlist" || type === "profile") {
+    payload.type = type;
+  }
   return apiFetch<PreviewResponseDto>("/preview", {
     method: "POST",
-    body: JSON.stringify({ url: url.trim() }),
-  });
-}
-
-/** Playlist / channel / profile: formats from first item + full entry list for UI rows. */
-export async function previewBundleMedia(url: string): Promise<PreviewResponseDto> {
-  return apiFetch<PreviewResponseDto>("/preview/bundle", {
-    method: "POST",
-    body: JSON.stringify({ url: url.trim() }),
+    body: JSON.stringify(payload),
   });
 }
 
