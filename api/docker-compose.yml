@@ -39,6 +39,10 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+    # Fix "Name or service not known" when the host/VPN gives Docker broken DNS (common on Windows Desktop).
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: >
       sh -c "uv sync && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
@@ -61,6 +65,9 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: >
       sh -c "uv sync && uv run arq app.workers.tasks.WorkerSettings"
     environment:

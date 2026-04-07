@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { sameVideoPage } from "../shared/same-video-page";
+import { isVoklerSupportedVideoPage } from "../shared/supported-video-pages";
 
 import "./popup.css";
 
@@ -177,6 +178,8 @@ function App() {
   }, [hits, tabId, tabUrl]);
 
   const primaryHit = tabHits[0] ?? null;
+
+  const tabIsSupportedVideoPage = !tabUrl || isVoklerSupportedVideoPage(tabUrl);
 
   useEffect(() => {
     if (!tabHits.length) {
@@ -398,7 +401,12 @@ function App() {
         <div className={`page ${activeTab === "download" ? "active" : ""}`}>
           <div>
             <div className="section-label">Captured streams</div>
-            {qualityCards.length === 0 ? (
+            {!tabIsSupportedVideoPage ? (
+              <p className="empty-hint">
+                This page isn’t a supported video URL. Open a watch page, reel, TikTok video, or
+                similar so Vokler can detect the stream for this tab.
+              </p>
+            ) : qualityCards.length === 0 ? (
               <p className="empty-hint">
                 Play a video on this tab. Stream-like requests (HLS, MP4, etc.) appear here when
                 detected.

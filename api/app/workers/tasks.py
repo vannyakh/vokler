@@ -21,6 +21,17 @@ from app.services.storage import save_finished_artifact
 
 logger = logging.getLogger(__name__)
 
+# Parallel archive downloads (each yt-dlp still uses ffmpeg/disk; keep modest to avoid bans).
+_ARCHIVE_FETCH_CONCURRENCY = 3
+
+
+def _zip_archive_store_only(collect: Path, zip_path: Path) -> None:
+    """Store-only ZIP: much faster than DEFLATED for already-compressed video; less CPU."""
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+        for p in sorted(collect.iterdir()):
+            if p.is_file():
+                zf.write(p, arcname=p.name)
+
 
 async def _set_job_progress(job_id: UUID, progress: float) -> None:
     async with AsyncSessionLocal() as session:
@@ -36,8 +47,10 @@ async def _set_archive_progress(archive_id: UUID, progress: float, current_index
         aj = await session.get(ArchiveJob, archive_id)
         if aj is None:
             return
-        aj.progress = min(100.0, max(0.0, progress))
-        aj.current_index = current_index
+        # Monotonic: concurrent downloads + hooks may arrive out of order.
+        p = min(100.0, max(0.0, progress))
+        aj.progress = max(aj.progress, p)
+        aj.current_index = max(aj.current_index, current_index)
         await session.commit()
 
 
@@ -135,7 +148,7 @@ async def run_archive_job(ctx, archive_id: str) -> None:
         fmt = aj.download_format or "original"
         bundle_label = (aj.label or "download").strip() or "download"
         aj.status = JobStatus.RUNNING
-        aj.progress = max(aj.progress, 2.0)
+        aj.progress = 2.0
         aj.error_message = None
         aj.current_index = 0
         await session.commit()
@@ -167,7 +180,7 @@ async def run_archive_job(ctx, archive_id: str) -> None:
             if not tbytes or tbytes <= 0:
                 return
             inner = downloaded / float(tbytes)
-            pct = 5.0 + i * segment + 0.92 * segment * inner
+            pct = 5.0 + i * segment + 0.97 * segment * inner
             now = time.monotonic()
             if inner < 0.99 and now - last_flush[0] < 0.35:
                 return
@@ -187,31 +200,38 @@ async def run_archive_job(ctx, archive_id: str) -> None:
         return progress_hook
 
     try:
-        for idx, page_url in enumerate(urls):
-            await _set_archive_progress(aid, 5.0 + idx * segment, idx)
-            downloader = YtDlpDownloader(fmt, progress_hook=make_hook(idx))
-            tmp_dir_path: Path | None = None
-            try:
-                src_path, _metadata, tmp_dir = await downloader.download(page_url)
-                tmp_dir_path = tmp_dir
-                dest_name = f"{idx + 1:03d}_{src_path.name}"
-                dest = collect / dest_name
-                shutil.copy2(src_path, dest)
-            finally:
-                if tmp_dir_path is not None:
-                    await asyncio.to_thread(shutil.rmtree, str(tmp_dir_path), True)
+        sem = asyncio.Semaphore(_ARCHIVE_FETCH_CONCURRENCY)
 
-        await _set_archive_progress(aid, 93.0, total)
+        async def download_one(idx: int, page_url: str) -> None:
+            async with sem:
+                await _set_archive_progress(aid, 5.0 + idx * segment, idx)
+                downloader = YtDlpDownloader(fmt, progress_hook=make_hook(idx))
+                tmp_dir_path: Path | None = None
+                try:
+                    src_path, _metadata, tmp_dir = await downloader.download(page_url)
+                    tmp_dir_path = tmp_dir
+                    dest_name = f"{idx + 1:03d}_{src_path.name}"
+                    dest = collect / dest_name
+                    await asyncio.to_thread(shutil.copy2, src_path, dest)
+                finally:
+                    if tmp_dir_path is not None:
+                        await asyncio.to_thread(shutil.rmtree, str(tmp_dir_path), True)
+
+        results = await asyncio.gather(
+            *[download_one(i, u) for i, u in enumerate(urls)],
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+
+        await _set_archive_progress(aid, 90.0, max(0, total - 1))
 
         safe_label = re.sub(r"[^\w.\-]+", "_", bundle_label)[:80].strip("_") or "download"
         zip_path = staging / f"{safe_label}.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for p in sorted(collect.iterdir()):
-                if p.is_file():
-                    zf.write(p, arcname=p.name)
+        await asyncio.to_thread(_zip_archive_store_only, collect, zip_path)
 
-        await _set_archive_progress(aid, 96.0, total)
-
+        await _set_archive_progress(aid, 94.0, total)
         dest_uri = await save_finished_artifact(user_id, aid, zip_path, zip_path.name)
 
         async with AsyncSessionLocal() as session:

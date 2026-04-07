@@ -18,7 +18,9 @@ dependencies = [
     "aioboto3>=13.2.0",
     "python-multipart>=0.0.12",
     "email-validator>=2.2.0",
-    "yt-dlp>=2025.1.0",
+    # default + curl-cffi: requests/websockets/certifi so Docker/slim images don’t hit
+    # NoSupportingHandlers / urllib FileNotFoundError on YouTube extraction.
+    "yt-dlp[default,curl-cffi]>=2025.1.0",
 ]
 
 [build-system]

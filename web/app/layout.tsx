@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Syne } from "next/font/google";
-import Script from "next/script";
-
-import { THEME_STORAGE_KEY } from "@/lib/theme";
+import { DM_Sans, JetBrains_Mono, Syne } from "next/font/google";
 
 import "./globals.css";
+import { PageBackground } from "@/components/PageBackground";
 import { ToastProvider } from "@/components/ui/toast/Toast";
 
 /** Syne — UI / headings (Google Fonts: 400–700). */
@@ -23,9 +21,18 @@ const fontMono = JetBrains_Mono({
   display: "swap",
 });
 
+/** DM Sans — download / format panel (readable at small sizes). */
+const fontPanel = DM_Sans({
+  variable: "--font-vok-panel",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Vokler",
-  description: "Social video downloader",
+  title: "Vokler — Download videos from YouTube, TikTok, and more",
+  description:
+    "Free web-based video downloader. Paste a URL, pick MP4 or audio quality, and save from YouTube, TikTok, Instagram, and more. Playlists and batch ZIP supported.",
 };
 
 export default function RootLayout({
@@ -33,20 +40,17 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const themeInit = `(function(){try{var k='${THEME_STORAGE_KEY}',t=localStorage.getItem(k);if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})()`;
-
   return (
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${fontSans.variable} ${fontMono.variable} h-full antialiased`}
+      className={`${fontSans.variable} ${fontMono.variable} ${fontPanel.variable} h-full antialiased`}
     >
       <body className="min-h-full overflow-x-hidden font-sans">
-        <ToastProvider>
-        {/* <Script id="vokler-theme-init" strategy="beforeInteractive"> */}
-          {children}
-        {/* </Script> */}
-          </ToastProvider>
+        <PageBackground />
+        <div className="relative z-1">
+          <ToastProvider>{children}</ToastProvider>
+        </div>
       </body>
     </html>
   );

@@ -12,9 +12,13 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
+from yt_dlp.networking.exceptions import RequestError as YtdlpRequestError
 from yt_dlp.utils import DownloadError
 
 logger = logging.getLogger(__name__)
+
+# Networking (NoSupportingHandlers, etc.) is not a DownloadError; wrap for API errors.
+_YDL_EXTRACT_ERRORS = (DownloadError, OSError, ValueError, YtdlpRequestError)
 
 FORMAT_MAP: dict[str, str] = {
     "mp4_1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080]",
@@ -129,7 +133,7 @@ def extract_preview_sync(url: str) -> dict[str, Any]:
             info = ydl.extract_info(url, download=False)
             if not isinstance(info, dict):
                 raise RuntimeError("Unexpected extractor response")
-    except (DownloadError, OSError, ValueError) as e:
+    except _YDL_EXTRACT_ERRORS as e:
         raise RuntimeError(str(e) or "Failed to read media info") from e
 
     formats = _build_format_rows(info)
@@ -152,9 +156,12 @@ async def extract_preview(url: str) -> dict[str, Any]:
 
 def normalize_youtube_bundle_url(url: str) -> str:
     """
-    yt-dlp ``extract_flat`` on ``watch?v=…&list=…`` returns a single video (``entries`` is
-    ``None``). Use the canonical playlist URL so the full list is expanded.
-    Handles ``youtu.be/VIDEO?list=…`` the same way.
+    Canonical YouTube bundle URL for ``extract_flat`` (playlist tabs, mixes, channel lists).
+
+    - ``watch?v=…&list=…`` (incl. Mix ``RD…`` + ``index=``): yt-dlp only returns one entry unless
+      we use ``/playlist?list=…`` so the mix expands to **all** visible tracks.
+    - ``/playlist?list=…&index=…``: strip extra query args for a stable playlist id URL.
+    - ``youtu.be/…?list=…`` and ``/shorts/…?list=…``: same canonical playlist form.
     """
     raw = (url or "").strip()
     if not raw:
@@ -175,14 +182,20 @@ def normalize_youtube_bundle_url(url: str) -> str:
     if not list_id:
         return raw
 
+    canonical = f"https://www.youtube.com/playlist?list={list_id}"
     segments = [seg for seg in parsed.path.split("/") if seg]
-    is_watch = bool(segments and segments[0] == "watch")
-    is_shorts = bool(segments and segments[0] == "shorts")
+    head = segments[0].lower() if segments else ""
+
+    if head == "playlist":
+        return canonical
+
+    is_watch = head == "watch"
+    is_shorts = len(segments) >= 2 and segments[0] == "shorts"
     is_youtu_be = bool(re.fullmatch(r"(?:[\w-]+\.)?youtu\.be", host))
     has_v = bool(qs.get("v"))
 
     if is_youtu_be or (is_watch and has_v) or is_shorts:
-        return f"https://www.youtube.com/playlist?list={list_id}"
+        return canonical
     return raw
 
 
@@ -209,13 +222,14 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
         "skip_download": True,
         "extract_flat": True,
         "ignoreerrors": True,
+        "noplaylist": False,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         if not isinstance(info, dict):
             raise RuntimeError("Unexpected extractor response")
-    except (DownloadError, OSError, ValueError) as e:
+    except _YDL_EXTRACT_ERRORS as e:
         raise RuntimeError(str(e) or "Failed to list media URLs") from e
 
     title = (
@@ -292,13 +306,14 @@ def extract_flat_entries_sync(url: str, max_entries: int = 100) -> tuple[list[di
         "skip_download": True,
         "extract_flat": True,
         "ignoreerrors": True,
+        "noplaylist": False,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         if not isinstance(info, dict):
             raise RuntimeError("Unexpected extractor response")
-    except (DownloadError, OSError, ValueError) as e:
+    except _YDL_EXTRACT_ERRORS as e:
         raise RuntimeError(str(e) or "Failed to list media URLs") from e
 
     title_hint = _bundle_title_from_info(info)
@@ -437,7 +452,7 @@ class YtDlpDownloader:
                     "filesize": info.get("filesize") or info.get("filesize_approx"),
                 }
             return out_path, metadata, tmp_dir
-        except (DownloadError, OSError, ValueError) as e:
+        except _YDL_EXTRACT_ERRORS as e:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise RuntimeError(str(e) or "yt-dlp download failed") from e
         except Exception:

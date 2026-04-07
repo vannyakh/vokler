@@ -27,6 +27,16 @@ html[data-theme="dark"] {
   --vok-gradient-hero-from: var(--vok-accent);
   --vok-gradient-hero-to: var(--vok-accent3);
   --vok-btn-gradient-end: #8b5cf6;
+  /* Page background SVG */
+  --vok-bg-pattern-line: rgba(255, 255, 255, 0.038);
+  --vok-bg-pattern-dot: rgba(140, 99, 255, 0.16);
+  --vok-bg-glow-center: rgba(108, 99, 255, 0.09);
+  --vok-bg-sweep-stroke-a: rgba(108, 99, 255, 0.11);
+  --vok-bg-sweep-stroke-b: rgba(67, 232, 216, 0.09);
+  --vok-bg-sweep-mid: rgba(108, 99, 255, 0.04);
+  --vok-bg-shape-accent: rgba(108, 99, 255, 0.2);
+  --vok-bg-shape-mint: rgba(67, 232, 216, 0.16);
+  --vok-bg-shape-violet: rgba(200, 80, 255, 0.15);
 }
 
 html[data-theme="light"] {
@@ -52,6 +62,15 @@ html[data-theme="light"] {
   --vok-gradient-hero-from: var(--vok-accent);
   --vok-gradient-hero-to: var(--vok-accent3);
   --vok-btn-gradient-end: #7c3aed;
+  --vok-bg-pattern-line: rgba(0, 0, 0, 0.055);
+  --vok-bg-pattern-dot: rgba(91, 82, 229, 0.14);
+  --vok-bg-glow-center: rgba(91, 82, 229, 0.07);
+  --vok-bg-sweep-stroke-a: rgba(91, 82, 229, 0.12);
+  --vok-bg-sweep-stroke-b: rgba(46, 196, 182, 0.1);
+  --vok-bg-sweep-mid: rgba(91, 82, 229, 0.035);
+  --vok-bg-shape-accent: rgba(91, 82, 229, 0.22);
+  --vok-bg-shape-mint: rgba(46, 196, 182, 0.18);
+  --vok-bg-shape-violet: rgba(124, 58, 237, 0.16);
 }
 
 @theme inline {
@@ -73,6 +92,11 @@ body {
   min-height: 100vh;
 }
 
+/* Video info + format picker — distinct from marketing Syne headings */
+.vok-video-panel {
+  font-family: var(--font-vok-panel), var(--font-syne), ui-sans-serif, system-ui;
+}
+
 @keyframes vok-pulse {
   0%,
   100% {
@@ -85,4 +109,248 @@ body {
 
 .animate-vok-pulse {
   animation: vok-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes vok-hero-shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.vok-hero-highlight {
+  background: linear-gradient(90deg, #7c4dff, #00e5cc, #c94dff, #7c4dff);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: vok-hero-shimmer 4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vok-hero-highlight {
+    animation: none;
+    background-position: 0 center;
+  }
+}
+
+/* —— Full-page SVG background —— */
+@keyframes vok-bg-grid-pan {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(32px, 32px);
+  }
+}
+
+/* Slower counter-motion for mild parallax vs line grid */
+@keyframes vok-bg-dot-pan {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(-14px, -10px);
+  }
+}
+
+@keyframes vok-bg-glow-breathe {
+  0%,
+  100% {
+    opacity: 0.88;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Organic loop: gentle figure-eight-ish path, low rotation */
+@keyframes vok-bg-drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 0.065;
+  }
+  22% {
+    transform: translate(10px, -14px) rotate(1.8deg);
+    opacity: 0.1;
+  }
+  45% {
+    transform: translate(18px, -4px) rotate(-1.2deg);
+    opacity: 0.12;
+  }
+  68% {
+    transform: translate(6px, 12px) rotate(0.8deg);
+    opacity: 0.085;
+  }
+  88% {
+    transform: translate(-8px, 4px) rotate(-0.6deg);
+    opacity: 0.07;
+  }
+}
+
+@keyframes vok-bg-drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 0.06;
+  }
+  25% {
+    transform: translate(-12px, -10px) rotate(-1.5deg);
+    opacity: 0.095;
+  }
+  48% {
+    transform: translate(-6px, 14px) rotate(1.4deg);
+    opacity: 0.11;
+  }
+  72% {
+    transform: translate(14px, 6px) rotate(-0.9deg);
+    opacity: 0.08;
+  }
+  90% {
+    transform: translate(4px, -8px) rotate(0.5deg);
+    opacity: 0.065;
+  }
+}
+
+@keyframes vok-bg-drift-c {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 0.055;
+  }
+  30% {
+    transform: translate(14px, 10px) rotate(2deg);
+    opacity: 0.09;
+  }
+  55% {
+    transform: translate(-10px, 8px) rotate(-1.8deg);
+    opacity: 0.105;
+  }
+  78% {
+    transform: translate(-14px, -12px) rotate(1deg);
+    opacity: 0.075;
+  }
+}
+
+@keyframes vok-bg-sweep-dash {
+  to {
+    stroke-dashoffset: -360;
+  }
+}
+
+@keyframes vok-bg-sweep-fade {
+  0%,
+  100% {
+    opacity: 0.34;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+
+@keyframes vok-bg-band-drift {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateX(-28px);
+  }
+  50% {
+    opacity: 0.52;
+    transform: translateX(28px);
+  }
+}
+
+.vok-page-bg-svg .vok-bg-grid-pan {
+  animation: vok-bg-grid-pan 64s linear infinite;
+  will-change: transform;
+}
+
+.vok-page-bg-svg .vok-bg-dot-pan {
+  animation: vok-bg-dot-pan 100s linear infinite alternate;
+  will-change: transform;
+}
+
+.vok-page-bg-svg .vok-bg-glow-breathe {
+  animation: vok-bg-glow-breathe 18s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: opacity;
+}
+
+.vok-page-bg-svg .vok-bg-sweep-line {
+  stroke-dasharray: 28 72;
+  animation:
+    vok-bg-sweep-dash 48s linear infinite,
+    vok-bg-sweep-fade 48s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  will-change: stroke-dashoffset, opacity;
+}
+
+.vok-page-bg-svg .vok-bg-sweep-line--b {
+  stroke-dasharray: 20 64;
+  animation:
+    vok-bg-sweep-dash 56s linear infinite reverse,
+    vok-bg-sweep-fade 56s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  animation-delay: -10s, -10s;
+}
+
+.vok-page-bg-svg .vok-bg-sweep-line--c {
+  stroke-dasharray: 16 52;
+  animation:
+    vok-bg-sweep-dash 68s linear infinite,
+    vok-bg-sweep-fade 68s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  animation-delay: -18s, -18s;
+}
+
+.vok-page-bg-svg .vok-bg-band-drift {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vok-bg-band-drift 52s cubic-bezier(0.42, 0, 0.58, 1) infinite alternate;
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+}
+
+html[data-theme="light"] .vok-page-bg-svg .vok-bg-band-drift {
+  mix-blend-mode: multiply;
+}
+
+.vok-page-bg-svg .vok-bg-drift {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-iteration-count: infinite;
+  animation-timing-function: cubic-bezier(0.45, 0.02, 0.25, 1);
+}
+
+.vok-page-bg-svg .vok-bg-drift--a {
+  animation-name: vok-bg-drift-a;
+}
+
+.vok-page-bg-svg .vok-bg-drift--b {
+  animation-name: vok-bg-drift-b;
+}
+
+.vok-page-bg-svg .vok-bg-drift--c {
+  animation-name: vok-bg-drift-c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vok-page-bg-svg .vok-bg-grid-pan,
+  .vok-page-bg-svg .vok-bg-dot-pan,
+  .vok-page-bg-svg .vok-bg-glow-breathe,
+  .vok-page-bg-svg .vok-bg-sweep-line,
+  .vok-page-bg-svg .vok-bg-band-drift,
+  .vok-page-bg-svg .vok-bg-drift {
+    animation: none !important;
+  }
+
+  .vok-page-bg-svg .vok-bg-sweep-line {
+    stroke-dasharray: none;
+    opacity: 0.48;
+  }
+
+  .vok-page-bg-svg .vok-bg-band-drift {
+    transform: none;
+    opacity: 0.4;
+  }
 }

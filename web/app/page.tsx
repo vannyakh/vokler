@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo } from "react";
 
+import { LandingContent } from "@/components/LandingContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { VideoInfoPanel } from "@/components/VideoInfoPanel";
 import { useToast } from "@/components/ui/toast/Toast";
@@ -16,6 +17,7 @@ import {
   useDownloadStore,
   type DownloadMode,
 } from "@/stores/downloadStore";
+import Image from "next/image";
 
 const PLATFORMS: { label: string; dot: string }[] = [
   { label: "YouTube", dot: "#ff0000" },
@@ -49,7 +51,7 @@ function modePlaceholder(mode: DownloadMode): string {
     case "multi":
       return "https://example.com/watch?v=…\nhttps://…";
     case "playlist":
-      return "https://youtube.com/playlist?list=…";
+      return "Playlist or mix: …/playlist?list=… or watch?v=…&list=…";
     case "profile":
       return "https://instagram.com/username or https://youtube.com/@channel";
     default:
@@ -84,11 +86,21 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-function TabIcon({ name }: { name: "single" | "multi" | "playlist" | "profile" }) {
+function TabIcon({
+  name,
+}: {
+  name: "single" | "multi" | "playlist" | "profile";
+}) {
   const stroke = "currentColor";
   if (name === "single") {
     return (
-      <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" aria-hidden>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        aria-hidden
+      >
         <rect x="3" y="3" width="18" height="18" rx="3" />
         <path d="M8 12h8M12 8v8" />
       </svg>
@@ -96,14 +108,26 @@ function TabIcon({ name }: { name: "single" | "multi" | "playlist" | "profile" }
   }
   if (name === "multi") {
     return (
-      <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" aria-hidden>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        aria-hidden
+      >
         <path d="M4 6h16M4 12h10M4 18h13" />
       </svg>
     );
   }
   if (name === "playlist") {
     return (
-      <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" aria-hidden>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        aria-hidden
+      >
         <rect x="2" y="4" width="20" height="4" rx="1" />
         <rect x="2" y="10" width="20" height="4" rx="1" />
         <rect x="2" y="16" width="20" height="4" rx="1" />
@@ -111,7 +135,13 @@ function TabIcon({ name }: { name: "single" | "multi" | "playlist" | "profile" }
     );
   }
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={stroke}
+      strokeWidth="2"
+      aria-hidden
+    >
       <circle cx="12" cy="8" r="4" />
       <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
     </svg>
@@ -131,7 +161,9 @@ export default function HomePage() {
   const activeJobId = useDownloadStore((s) => s.activeJobId);
   const sourceUrl = useDownloadStore((s) => s.sourceUrl);
   const downloading = useDownloadStore((s) => s.downloading);
-  const autoPreviewBlockedKey = useDownloadStore((s) => s.autoPreviewBlockedKey);
+  const autoPreviewBlockedKey = useDownloadStore(
+    (s) => s.autoPreviewBlockedKey,
+  );
 
   const setMode = useDownloadStore((s) => s.setMode);
   const onUrlInputChange = useDownloadStore((s) => s.onUrlInputChange);
@@ -148,16 +180,23 @@ export default function HomePage() {
     [mode, url, sourceUrl],
   );
 
-  const onWsProgress = useCallback((data: { job_id?: string; progress?: number; status?: string }) => {
-    const st = useDownloadStore.getState();
-    const jid = data.job_id ?? st.activeJobId;
-    if (!jid || st.mode !== "single") return;
-    const patch: Partial<JobDto> = {
-      ...(typeof data.progress === "number" ? { progress: data.progress } : {}),
-      ...(typeof data.status === "string" ? { status: data.status as JobDto["status"] } : {}),
-    };
-    if (Object.keys(patch).length) st.patchSingleJobIfMatch(jid, patch);
-  }, []);
+  const onWsProgress = useCallback(
+    (data: { job_id?: string; progress?: number; status?: string }) => {
+      const st = useDownloadStore.getState();
+      const jid = data.job_id ?? st.activeJobId;
+      if (!jid || st.mode !== "single") return;
+      const patch: Partial<JobDto> = {
+        ...(typeof data.progress === "number"
+          ? { progress: data.progress }
+          : {}),
+        ...(typeof data.status === "string"
+          ? { status: data.status as JobDto["status"] }
+          : {}),
+      };
+      if (Object.keys(patch).length) st.patchSingleJobIfMatch(jid, patch);
+    },
+    [],
+  );
 
   useJobProgressWebSocket(
     activeJobId,
@@ -183,9 +222,20 @@ export default function HomePage() {
       cancelAutoFetchDebounce();
       return;
     }
-    scheduleAutoFetchDebounce(primary, (p) => void runFetchPreview(p, addToast));
+    scheduleAutoFetchDebounce(
+      primary,
+      (p) => void runFetchPreview(p, addToast),
+    );
     return () => cancelAutoFetchDebounce();
-  }, [url, mode, downloading, loadingInfo, autoPreviewBlockedKey, runFetchPreview, addToast]);
+  }, [
+    url,
+    mode,
+    downloading,
+    loadingInfo,
+    autoPreviewBlockedKey,
+    runFetchPreview,
+    addToast,
+  ]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -200,23 +250,11 @@ export default function HomePage() {
     <div className="mx-auto max-w-[780px] px-5 pb-16 pt-10">
       <div className="mb-12 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-[10px]"
-            style={{
-              background: "linear-gradient(135deg, var(--vok-accent), var(--vok-accent2))",
-            }}
-          >
-            <svg viewBox="0 0 28 28" fill="none" stroke="#fff" strokeWidth="2.5" aria-hidden>
-              <path d="M12 2L12 17M7 12l5 5 5-5M3 23h22" />
-            </svg>
+          <div className="flex h-9 w-9 items-center justify-center rounded-[10px]">
+            <Image src="/vokler.png" alt="Vokler" width={160} height={160} />
           </div>
-          <div>
-            <div className="font-sans text-[15px] font-bold tracking-tight">
-              Vokler
-            </div>
-            <div className="mt-px text-[11px]" style={{ color: "var(--vok-muted)" }}>
-              social video downloader
-            </div>
+          <div className="font-sans text-[20px] font-bold tracking-tight">
+            Vokler
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -227,15 +265,14 @@ export default function HomePage() {
       <div className="mb-10 text-center">
         <h1 className="mb-2.5 text-[clamp(26px,5vw,38px)] font-semibold leading-[1.15] tracking-tight">
           Download from{" "}
-          <span
-            className="bg-gradient-to-r from-[var(--vok-accent)] to-[var(--vok-accent3)] bg-clip-text text-transparent"
-          >
-            any platform,
-          </span>
+          <span className="vok-hero-highlight">any platform,</span>
           <br />
           any format, instantly
         </h1>
-        <p className="text-[14px] font-normal" style={{ color: "var(--vok-muted)" }}>
+        <p
+          className="text-[14px] font-normal"
+          style={{ color: "var(--vok-muted)" }}
+        >
           YouTube · TikTok · Instagram · Twitter · Facebook · Vimeo · and more
         </p>
       </div>
@@ -251,15 +288,22 @@ export default function HomePage() {
               color: "var(--vok-muted)",
             }}
           >
-            <span className="h-2 w-2 rounded-full" style={{ background: p.dot }} />
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ background: p.dot }}
+            />
             {p.label}
           </div>
         ))}
       </div>
 
       <div
+        id="vok-fetch-tool"
         className="mb-6 flex gap-1 rounded-[var(--vok-radius)] border p-1"
-        style={{ background: "var(--vok-surface2)", borderColor: "var(--vok-border)" }}
+        style={{
+          background: "var(--vok-surface2)",
+          borderColor: "var(--vok-border)",
+        }}
         role="tablist"
       >
         {(
@@ -275,8 +319,11 @@ export default function HomePage() {
             type="button"
             role="tab"
             aria-selected={mode === key}
+            disabled={downloading}
+            aria-disabled={downloading}
+            title={downloading ? "Finish the current download before switching mode" : undefined}
             onClick={() => setMode(key)}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-[9px] px-3 py-2 text-[13px] font-medium transition"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-[9px] px-3 py-2 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-55"
             style={
               mode === key
                 ? { background: "var(--vok-accent)", color: "#fff" }
@@ -380,24 +427,40 @@ export default function HomePage() {
                 (mode === "multi" ? parseUrls(url).length === 0 : !url.trim())
               }
               className="flex min-h-[46px] shrink-0 items-center justify-center gap-2 self-start rounded-[var(--vok-radius)] px-5 text-[14px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50 sm:min-w-[7.5rem] sm:px-6"
-              style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--vok-accent), #8b5cf6)",
+              }}
             >
               {loadingInfo ? <Spinner /> : null}
               {loadingInfo ? "Fetching" : "Fetch"}
             </button>
           </div>
           {mode === "multi" ? (
-            <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
-              One URL per line. Fetch previews the first link. Download queues every line, then builds
-              one ZIP.
+            <p
+              className="mt-2 text-[12px]"
+              style={{ color: "var(--vok-muted)" }}
+            >
+              One URL per line. Fetch previews the first link. Download queues
+              every line, then builds one ZIP.
             </p>
           ) : null}
-          {mode === "playlist" || mode === "profile" ? (
-            <p className="mt-2 text-[12px]" style={{ color: "var(--vok-muted)" }}>
-              Fetch loads metadata for the URL. Download expands the playlist or channel tab into
-              individual videos, downloads each, then delivers one ZIP.
+          {/* {mode === "playlist" || mode === "profile" ? (
+            <p
+              className="mt-2 text-[12px]"
+              style={{ color: "var(--vok-muted)" }}
+            >
+              Fetch loads metadata for the URL. Download expands the playlist,
+              Mix (<code className="font-mono text-[11px]">list=RD…</code>
+              ), or channel tab into individual videos (up to 100), then
+              delivers one ZIP. Paste a watch link with{" "}
+              <code className="font-mono text-[11px]">
+                watch?v=…{"&"}list=…
+              </code>{" "}
+              if you like—playlist mode resolves the full mix from{" "}
+              <code className="font-mono text-[11px]">list</code>.
             </p>
-          ) : null}
+          ) : null} */}
         </div>
       ) : null}
 
@@ -436,18 +499,27 @@ export default function HomePage() {
       {preview && mode !== "single" ? (
         <>
           <div className="mb-6 mt-10 flex items-center gap-2.5">
-            <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
+            <hr
+              className="min-w-0 flex-1 border-0 border-t"
+              style={{ borderColor: "var(--vok-border)" }}
+            />
             <span
               className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider"
               style={{ color: "var(--vok-muted)" }}
             >
               Bundle
             </span>
-            <hr className="min-w-0 flex-1 border-0 border-t" style={{ borderColor: "var(--vok-border)" }} />
+            <hr
+              className="min-w-0 flex-1 border-0 border-t"
+              style={{ borderColor: "var(--vok-border)" }}
+            />
           </div>
           <div
             className="rounded-[var(--vok-radius)] border p-4"
-            style={{ background: "var(--vok-surface2)", borderColor: "var(--vok-border)" }}
+            style={{
+              background: "var(--vok-surface2)",
+              borderColor: "var(--vok-border)",
+            }}
           >
             <div
               className="mb-2 text-[11px] font-semibold uppercase tracking-wider"
@@ -461,12 +533,18 @@ export default function HomePage() {
               className="max-h-[220px] list-inside list-decimal space-y-1 overflow-y-auto break-all pl-1 text-[12px] leading-relaxed"
               style={{ color: "var(--vok-text)" }}
             >
-              {(archiveJob?.source_urls?.length ? archiveJob.source_urls : allUrls).map((u, i) => (
+              {(archiveJob?.source_urls?.length
+                ? archiveJob.source_urls
+                : allUrls
+              ).map((u, i) => (
                 <li key={`${i}-${u.slice(0, 120)}`}>{u}</li>
               ))}
             </ul>
             {archiveJob ? (
-              <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--vok-border)" }}>
+              <div
+                className="mt-4 border-t pt-3"
+                style={{ borderColor: "var(--vok-border)" }}
+              >
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span style={{ color: "var(--vok-muted)" }}>
                     {archiveJob.status === "completed"
@@ -475,16 +553,26 @@ export default function HomePage() {
                         ? (archiveJob.error_message ?? "Archive failed")
                         : `Downloading ${Math.min(archiveJob.current_index + 1, archiveJob.total_items)} / ${archiveJob.total_items}`}
                   </span>
-                  <span className="font-mono font-semibold" style={{ color: "var(--vok-accent)" }}>
-                    {Math.round(Math.min(100, Math.max(0, archiveJob.progress)))}%
+                  <span
+                    className="font-mono font-semibold"
+                    style={{ color: "var(--vok-accent)" }}
+                  >
+                    {Math.round(
+                      Math.min(100, Math.max(0, archiveJob.progress)),
+                    )}
+                    %
                   </span>
                 </div>
-                <div className="h-[3px] overflow-hidden rounded" style={{ background: "var(--vok-surface3)" }}>
+                <div
+                  className="h-[3px] overflow-hidden rounded"
+                  style={{ background: "var(--vok-surface3)" }}
+                >
                   <div
                     className="h-full rounded transition-[width] duration-300"
                     style={{
                       width: `${Math.min(100, Math.max(0, archiveJob.progress))}%`,
-                      background: "linear-gradient(90deg, var(--vok-accent), var(--vok-accent3))",
+                      background:
+                        "linear-gradient(90deg, var(--vok-accent), var(--vok-accent3))",
                     }}
                   />
                 </div>
@@ -507,6 +595,8 @@ export default function HomePage() {
           </div>
         </>
       ) : null}
+
+      <LandingContent />
     </div>
   );
 }

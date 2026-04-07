@@ -1,3 +1,5 @@
+import { isVoklerSupportedVideoPage } from "../shared/supported-video-pages";
+
 const BAR_ID = "vokler-player-inject";
 const STYLE_ID = "vokler-player-inject-styles";
 const DISMISS_PREFIX = "vokler-inject-dismiss:";
@@ -23,6 +25,11 @@ const PLATFORMS: Record<string, PlatformConfig> = {
     mountSelector: "#movie_player",
     titleSelector:
       'meta[property="og:title"], h1.ytd-watch-metadata yt-formatted-string, ytd-watch-metadata h1 yt-formatted-string',
+  },
+  "youtu.be": {
+    name: "YouTube",
+    mountSelector: "video, ytd-player, #movie_player",
+    titleSelector: 'meta[property="og:title"], meta[name="title"]',
   },
   "instagram.com": {
     name: "Instagram",
@@ -84,7 +91,7 @@ function getYouTubeTitleFromDom(): string | null {
 
 function getVideoTitle(): string {
   const host = location.hostname.replace(/^www\./, "");
-  if (host.includes("youtube.com")) {
+  if (host.includes("youtube.com") || host === "youtu.be") {
     const yt = getYouTubeTitleFromDom();
     if (yt) return yt;
   }
@@ -108,7 +115,13 @@ function getVideoTitle(): string {
 function pageIdentityKey(): string {
   try {
     const u = new URL(location.href);
-    if (u.hostname.replace(/^www\./, "").includes("youtube.com")) {
+    const hostNorm = u.hostname.replace(/^www\./, "");
+    if (hostNorm === "youtu.be") {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      if (id) return `yt:v:${id}`;
+      return `yt:${u.pathname}${u.search}`;
+    }
+    if (hostNorm.includes("youtube.com")) {
       const v = u.searchParams.get("v");
       if (v) return `yt:v:${v}`;
       if (u.pathname.startsWith("/shorts/")) {
@@ -179,20 +192,7 @@ function findMountEl(): { el: HTMLElement; mode: "in-player" | "fixed" } | null 
     }
   }
 
-  const v = document.querySelector("video");
-  if (v) {
-    const parent = v.parentElement;
-    if (parent && parent !== document.body) {
-      const el = parent as HTMLElement;
-      const pos = window.getComputedStyle(el).position;
-      if (pos === "static") {
-        el.style.position = "relative";
-      }
-      return { el, mode: "in-player" };
-    }
-  }
-
-  return { el: document.body, mode: "fixed" };
+  return null;
 }
 
 function injectStyles(): void {
@@ -473,6 +473,8 @@ let navUnsub: (() => void) | null = null;
 let storageListener:
   | ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void)
   | null = null;
+let mountAttempt = 0;
+const MAX_MOUNT_ATTEMPTS = 12;
 
 function removeStorageListener(): void {
   if (storageListener) {
@@ -541,7 +543,7 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
         </div>
         <div class="vokler-q-dropdown" id="vokler-q-dropdown">
           <div class="vokler-q-header">
-            <div class="vokler-q-header-t">Captured streams</div>
+            <div class="vokler-q-header-t">Streams</div>
             <div class="vokler-q-header-s">Vokler · ${escapeHtml(shorten(title, 24))}</div>
           </div>
           ${dropdownItems}
@@ -553,7 +555,7 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
       </div>
       <button type="button" class="vokler-dl-main" id="vokler-save-btn" ${list.length ? "" : "disabled"}>
         <svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg>
-        Download
+        Save video
       </button>
       <button type="button" class="vokler-inj-close" id="vokler-inj-close" title="Dismiss" aria-label="Dismiss">
         <svg viewBox="0 0 14 14"><path d="M2 2l10 10M12 2L2 12"/></svg>
@@ -641,7 +643,7 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
 
   function resetMainButton(): void {
     saveBtn.classList.remove("vokler-busy", "vokler-done");
-    saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg> Download`;
+    saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 19h16"/></svg> Save video`;
     saveBtn.disabled = !list.length;
   }
 
@@ -750,12 +752,25 @@ function renderBar(hits: MediaHit[], mount: { el: HTMLElement; mode: "in-player"
 }
 
 async function tryMount(): Promise<void> {
+  if (!isVoklerSupportedVideoPage(location.href)) {
+    mountAttempt = 0;
+    teardownBar();
+    removeStorageListener();
+    return;
+  }
   if (sessionStorage.getItem(`${DISMISS_PREFIX}${location.href}`)) {
     return;
   }
 
   const mount = findMountEl();
-  if (!mount) return;
+  if (!mount) {
+    if (mountAttempt < MAX_MOUNT_ATTEMPTS) {
+      mountAttempt += 1;
+      window.setTimeout(() => void tryMount(), 450);
+    }
+    return;
+  }
+  mountAttempt = 0;
 
   if (document.getElementById(BAR_ID)) {
     return;
@@ -769,6 +784,11 @@ async function tryMount(): Promise<void> {
   const refresh = async () => {
     const b = document.getElementById(BAR_ID);
     if (!b || !document.body.contains(b)) return;
+    if (!isVoklerSupportedVideoPage(location.href)) {
+      teardownBar();
+      removeStorageListener();
+      return;
+    }
     const next = await fetchTabHits();
     const m = findMountEl();
     if (m) {
@@ -793,6 +813,7 @@ function initNavigationWatch(): void {
     const next = pageIdentityKey();
     if (next === lastKey) return;
     lastKey = next;
+    mountAttempt = 0;
     removeStorageListener();
     document.getElementById(BAR_ID)?.remove();
     document.getElementById("vokler-inj-toast")?.remove();
@@ -821,17 +842,13 @@ function initNavigationWatch(): void {
 }
 
 function boot(): void {
-  const hasVideo = (): boolean =>
-    !!document.querySelector("video") ||
-    !!getPlatformKey() ||
-    /youtube\.com\/watch|instagram\.com\/(reel|p)\//.test(location.href);
-
   const schedule = () => {
-    window.setTimeout(() => {
-      if (hasVideo()) {
-        void tryMount();
-      }
-    }, 600);
+    if (!isVoklerSupportedVideoPage(location.href)) {
+      return;
+    }
+    void tryMount();
+    window.setTimeout(() => void tryMount(), 900);
+    window.setTimeout(() => void tryMount(), 1800);
   };
 
   if (document.readyState === "loading") {

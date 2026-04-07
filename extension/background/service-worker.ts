@@ -1,20 +1,9 @@
 import { sameVideoPage } from "../shared/same-video-page";
+import { isVoklerSupportedVideoPage } from "../shared/supported-video-pages";
 
 const STORAGE_KEY = "voklerMediaUrls";
 const SETTINGS_KEY = "voklerPopupSettings";
 const MAX_URLS = 50;
-
-const VIDEO_PAGE_PATTERNS: RegExp[] = [
-  /youtube\.com\/watch/,
-  /youtube\.com\/shorts\//,
-  /m\.youtube\.com\/watch/,
-  /m\.youtube\.com\/shorts\//,
-  /instagram\.com\/(reel|p)\//,
-  /tiktok\.com\/@.+\/video/,
-  /(twitter|x)\.com\/.+\/status\//,
-  /facebook\.com\/.+\/videos\//,
-  /vimeo\.com\/\d+/,
-];
 
 export type MediaHit = {
   url: string;
@@ -27,7 +16,7 @@ export type MediaHit = {
 };
 
 function isVideoPageUrl(url: string): boolean {
-  return VIDEO_PAGE_PATTERNS.some((p) => p.test(url));
+  return isVoklerSupportedVideoPage(url);
 }
 
 function sanitizeFilename(name: string): string {
@@ -103,6 +92,9 @@ chrome.webRequest.onCompleted.addListener(
     if (!streamish) return;
 
     const pageUrl = await resolvePageUrlForTab(details.tabId);
+    if (pageUrl && !isVoklerSupportedVideoPage(pageUrl)) {
+      return;
+    }
 
     await pushMediaHit({
       url: details.url,

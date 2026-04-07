@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
@@ -63,6 +64,12 @@ def public_https_url_for_key(key: str) -> str | None:
     return f"{base}/{safe_key}"
 
 
+def _copy_file_to_dest(src: Path, dest: Path) -> None:
+    """Streamed filesystem copy (avoids loading multi‑GB ZIPs into RAM)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
 async def local_save(
     user_id: UUID | None,
     job_id: UUID,
@@ -71,9 +78,8 @@ async def local_save(
 ) -> Path:
     owner = _owner_segment(user_id)
     base = Path(settings.local_storage_path) / owner / str(job_id)
-    base.mkdir(parents=True, exist_ok=True)
     dest = base / filename
-    dest.write_bytes(src.read_bytes())
+    await asyncio.to_thread(_copy_file_to_dest, src, dest)
     return dest
 
 

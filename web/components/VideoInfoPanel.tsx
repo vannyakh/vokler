@@ -134,7 +134,7 @@ export function VideoInfoPanel({
 
   return (
     <div
-      className="rounded-[var(--vok-radius-lg)] border"
+      className="vok-video-panel rounded-[var(--vok-radius-lg)] border"
       style={{
         background: "var(--vok-surface)",
         borderColor: "var(--vok-border)",

@@ -37,6 +37,10 @@ def url_suggests_youtube_bundle_preview(url: str) -> bool:
     A plain ``extract_preview`` with ``noplaylist`` on a *playlist* or *tab* URL returns
     container metadata only (often **empty formats**). When ``PreviewRequest.type`` is
     omitted, we route these to the bundle path so the API returns ``bundle_items`` + formats.
+
+    ``watch?v=VIDEO&list=RD…`` (mix / radio) still targets one video; use the single-video
+    path so ``noplaylist`` preview works. Only treat ``list=`` as bundle when there is no
+    explicit video id on the URL.
     """
     raw = (url or "").strip()
     if not raw:
@@ -51,12 +55,25 @@ def url_suggests_youtube_bundle_preview(url: str) -> bool:
     if "youtube.com" not in host and "youtu.be" not in host:
         return False
 
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    path = (parsed.path or "").rstrip("/").lower()
+    is_watch = bool(segments and segments[0] == "watch")
+    is_shorts = bool(len(segments) >= 2 and segments[0] == "shorts")
+    is_youtu_be = "youtu.be" in host
+
     qs = parse_qs(parsed.query, keep_blank_values=False)
     list_vals = [x.strip() for x in qs.get("list", []) if (x or "").strip()]
+    v_vals = [x.strip() for x in qs.get("v", []) if (x or "").strip()]
+
     if list_vals:
+        if is_watch and v_vals:
+            return False
+        if is_youtu_be and segments:
+            return False
+        if is_shorts:
+            return False
         return True
 
-    path = (parsed.path or "").rstrip("/").lower()
     if "playlist" in path:
         return True
 
