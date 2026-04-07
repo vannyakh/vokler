@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import yt_dlp
 from yt_dlp.utils import DownloadError
@@ -186,6 +186,48 @@ def normalize_youtube_bundle_url(url: str) -> str:
     return raw
 
 
+def normalize_youtube_flat_source_url(url: str) -> str:
+    """
+    Speed up yt-dlp ``extract_flat`` for channel-style URLs.
+
+    Resolving ``/@handle`` (channel home) is much slower than the **Videos** tab; normalize so we
+    only walk the uploads feed (same cap as ``max_entries`` via ``playlistend``).
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    try:
+        parsed = urlparse(u)
+    except ValueError:
+        return u
+    host = (parsed.netloc or "").lower()
+    if host.endswith(":443"):
+        host = host[:-4]
+    if "youtube.com" not in host:
+        return u
+
+    path = parsed.path or ""
+    # /channel/UC… → /channel/UC…/videos
+    m = re.match(r"^/(channel/[^/]+)/?$", path, re.IGNORECASE)
+    if m:
+        base = m.group(1)
+        new_path = f"/{base}/videos"
+        return urlunparse((parsed.scheme, parsed.netloc, new_path, "", parsed.query, parsed.fragment))
+
+    # /@handle or /@handle/ → /@handle/videos
+    m = re.match(r"^/(@[^/]+)/?$", path)
+    if m:
+        handle = m.group(1)
+        new_path = f"/{handle}/videos"
+        return urlunparse((parsed.scheme, parsed.netloc, new_path, "", parsed.query, parsed.fragment))
+
+    return u
+
+
+def _normalize_for_flat_extract(url: str) -> str:
+    return normalize_youtube_flat_source_url(normalize_youtube_bundle_url(url))
+
+
 def _entry_dict_to_url(entry: dict[str, Any]) -> str | None:
     u = entry.get("url") or entry.get("webpage_url")
     if u:
@@ -202,13 +244,14 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
     List video URLs from a playlist, channel tab, or multi-video page (``extract_flat``).
     For a single video, returns a one-element list.
     """
-    url = normalize_youtube_bundle_url(url)
+    url = _normalize_for_flat_extract(url)
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
         "ignoreerrors": True,
+        "playlistend": max_entries,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -285,13 +328,14 @@ def extract_flat_entries_sync(url: str, max_entries: int = 100) -> tuple[list[di
     """
     Flat playlist / tab / profile listing with per-row metadata for UI.
     """
-    url = normalize_youtube_bundle_url(url)
+    url = _normalize_for_flat_extract(url)
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "extract_flat": True,
         "ignoreerrors": True,
+        "playlistend": max_entries,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

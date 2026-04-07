@@ -63,4 +63,10 @@ def url_suggests_youtube_bundle_preview(url: str) -> bool:
     for suffix in ("/videos", "/shorts", "/streams", "/live"):
         if path.endswith(suffix):
             return True
+
+    # Channel handle home, legacy channel paths (flat listing + ``playlistend`` cap).
+    if re.match(r"^/@[^/]+$", path):
+        return True
+    if "/channel/" in path or re.match(r"^/c/[^/]+$", path) or re.match(r"^/user/[^/]+$", path):
+        return True
     return False
