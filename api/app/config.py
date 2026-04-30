@@ -1,7 +1,8 @@
+import json
 from functools import lru_cache
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_CORS = (
@@ -36,9 +37,12 @@ class Settings(BaseSettings):
         description="If non-empty, browsers and other clients must send header X-App-Key with this value "
         "(WebSocket may use query app_key=… or the same header). GET /health and OPTIONS are exempt.",
     )
-    cors_origins: list[str] = Field(
-        default_factory=lambda: list(_DEFAULT_CORS),
-        description="Allowed browser origins (comma-separated in env CORS_ORIGINS).",
+    # Stored as a plain str so pydantic-settings never tries json.loads() on it.
+    # Use the cors_origins computed property everywhere instead.
+    cors_origins_raw: str = Field(
+        default="",
+        validation_alias=AliasChoices("CORS_ORIGINS"),
+        description="Allowed browser origins. Comma-separated string or JSON array. Empty → dev defaults.",
     )
     cors_allow_localhost_regex: bool = Field(
         default=True,
@@ -51,6 +55,24 @@ class Settings(BaseSettings):
             "Useful for Railway preview URLs: https?://.*\\.up\\.railway\\.app"
         ),
     )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parse CORS_ORIGINS from a comma-separated string, JSON array, or fall back to dev defaults."""
+        raw = (self.cors_origins_raw or "").strip()
+        if not raw:
+            return list(_DEFAULT_CORS)
+        # Accept JSON array: '["https://foo.com","https://bar.com"]'
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [s.strip() for s in parsed if isinstance(s, str) and s.strip()]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Comma-separated: 'https://foo.com,https://bar.com'
+        parts = [x.strip() for x in raw.split(",") if x.strip()]
+        return parts if parts else list(_DEFAULT_CORS)
 
     @field_validator("redis_url", mode="before")
     @classmethod
@@ -84,15 +106,6 @@ class Settings(BaseSettings):
     def strip_frontend_app_key(cls, v: str) -> str:
         return (v or "").strip()
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: object) -> object:
-        if v is None or v == "":
-            return list(_DEFAULT_CORS)
-        if isinstance(v, str):
-            parts = [x.strip() for x in v.split(",") if x.strip()]
-            return parts if parts else list(_DEFAULT_CORS)
-        return v
     storage_backend: str = Field(
         default="local",
         description="local | r2 | s3 — r2 uses S3 API (Cloudflare R2); s3 is AWS or any S3-compatible store.",
