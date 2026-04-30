@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlparse, urlunparse
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,7 +21,11 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     database_url: str = "postgresql+asyncpg://vokler:vokler@localhost:5433/vokler"
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        validation_alias=AliasChoices("REDIS_URL", "REDIS_PRIVATE_URL"),
+        description="Redis connection URL. Railway exposes REDIS_URL (public) and REDIS_PRIVATE_URL (internal network).",
+    )
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -39,6 +44,25 @@ class Settings(BaseSettings):
         default=True,
         description='If True and app_env is development, also allow http(s)://localhost and 127.0.0.1 on any port.',
     )
+    cors_origin_regex: str | None = Field(
+        default=None,
+        description=(
+            "Optional regex for allowed browser origins, applied in addition to cors_origins. "
+            "Useful for Railway preview URLs: https?://.*\\.up\\.railway\\.app"
+        ),
+    )
+
+    @field_validator("redis_url", mode="before")
+    @classmethod
+    def normalise_redis_url(cls, v: object) -> object:
+        """Railway Redis plugin may omit the DB index. Ensure the URL always has one so arq is happy."""
+        if not isinstance(v, str):
+            return v
+        s = v.strip()
+        parsed = urlparse(s)
+        # Add /0 if there is no DB path component (e.g. redis://host:6379 → redis://host:6379/0)
+        path = parsed.path if parsed.path and parsed.path != "/" else "/0"
+        return urlunparse(parsed._replace(path=path))
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -95,6 +119,13 @@ class Settings(BaseSettings):
     )
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
+
+    @property
+    def arq_redis_settings(self):  # type: ignore[return]
+        """Pre-parsed arq RedisSettings built from ``redis_url``."""
+        from arq.connections import RedisSettings  # local import avoids circular deps at module load
+
+        return RedisSettings.from_dsn(self.redis_url)
 
 
 @lru_cache

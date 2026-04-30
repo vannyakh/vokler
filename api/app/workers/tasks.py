@@ -10,7 +10,6 @@ from pathlib import Path
 from tempfile import mkdtemp
 from uuid import UUID
 
-from arq.connections import RedisSettings
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.archive import ArchiveJob
@@ -246,5 +245,5 @@ async def run_archive_job(ctx, archive_id: str) -> None:
 
 
 class WorkerSettings:
-    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    redis_settings = settings.arq_redis_settings
     functions = [run_download_job, run_archive_job]

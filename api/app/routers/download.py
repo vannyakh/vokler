@@ -4,7 +4,6 @@ from typing import Any
 from uuid import UUID
 
 from arq import create_pool
-from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
@@ -64,8 +63,7 @@ def _resolve_artifact_file(result_path: str, storage_root: Path) -> Path | None:
 
 
 async def _enqueue_download(job_id: UUID) -> None:
-    redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    pool = await create_pool(redis_settings)
+    pool = await create_pool(settings.arq_redis_settings)
     try:
         await pool.enqueue_job("run_download_job", str(job_id))
     finally:
@@ -73,8 +71,7 @@ async def _enqueue_download(job_id: UUID) -> None:
 
 
 async def _enqueue_archive(archive_id: UUID) -> None:
-    redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    pool = await create_pool(redis_settings)
+    pool = await create_pool(settings.arq_redis_settings)
     try:
         await pool.enqueue_job("run_archive_job", str(archive_id))
     finally:
