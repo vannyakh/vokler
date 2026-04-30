@@ -1,5 +1,10 @@
 function publicBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL?.trim() ?? "";
+  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!raw) {
+    throw new Error(
+      "Lost connection to the API. Please check your internet connection and try again.",
+    );
+  }
   return raw.replace(/\/$/, "");
 }
 
