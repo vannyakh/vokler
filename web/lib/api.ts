@@ -1,10 +1,5 @@
 function publicBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (!raw) {
-    throw new Error(
-      "NEXT_PUBLIC_API_URL is not set. Add it to .env (local) or your host’s environment (e.g. Railway).",
-    );
-  }
+  const raw = process.env.NEXT_PUBLIC_API_URL?.trim() ?? "";
   return raw.replace(/\/$/, "");
 }
 
