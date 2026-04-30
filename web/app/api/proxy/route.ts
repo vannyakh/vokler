@@ -1,11 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-const UPSTREAM = (
-  process.env.API_URL ??          // Railway: reference api service private URL
-  process.env.FASTAPI_URL ??      // alternative server-only alias
-  process.env.NEXT_PUBLIC_API_URL ?? // local dev fallback
-  "http://127.0.0.1:8000"
-).replace(/\/$/, "");
+/** Server-side upstream only — no hardcoded default. */
+function upstreamBase(): string | null {
+  const raw =
+    process.env.API_URL?.trim() ??
+    process.env.FASTAPI_URL?.trim() ??
+    process.env.NEXT_PUBLIC_API_URL?.trim() ??
+    "";
+  if (!raw) return null;
+  return raw.replace(/\/$/, "");
+}
 
 const HOP_BY_HOP = new Set([
   "connection",
@@ -27,6 +31,17 @@ function stripForwardedSearch(source: URL, target: URL) {
 }
 
 async function proxy(request: NextRequest, method: string) {
+  const upstream = upstreamBase();
+  if (!upstream) {
+    return NextResponse.json(
+      {
+        detail:
+          "Upstream API URL is not configured. Set API_URL, FASTAPI_URL, or NEXT_PUBLIC_API_URL on the server.",
+      },
+      { status: 503 },
+    );
+  }
+
   const forward = request.nextUrl.searchParams.get("forward");
   if (!forward || !forward.startsWith("/")) {
     return NextResponse.json(
@@ -35,7 +50,7 @@ async function proxy(request: NextRequest, method: string) {
     );
   }
 
-  const target = new URL(UPSTREAM + forward);
+  const target = new URL(upstream + forward);
   stripForwardedSearch(request.nextUrl, target);
 
   const headers = new Headers();

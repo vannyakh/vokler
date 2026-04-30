@@ -1,7 +1,12 @@
-const DEFAULT_ORIGIN = "http://127.0.0.1:8000";
-
+/** Public API origin (browser + WebSocket). No default — set ``NEXT_PUBLIC_API_URL``. */
 function publicBase(): string {
-  return (process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_ORIGIN).replace(/\/$/, "");
+  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!raw) {
+    throw new Error(
+      "NEXT_PUBLIC_API_URL is not set. Add it to .env (local) or your host’s environment (e.g. Railway).",
+    );
+  }
+  return raw.replace(/\/$/, "");
 }
 
 function proxyEnabled(): boolean {
