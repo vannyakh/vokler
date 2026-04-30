@@ -40,6 +40,21 @@ class Settings(BaseSettings):
         description='If True and app_env is development, also allow http(s)://localhost and 127.0.0.1 on any port.',
     )
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def database_url_asyncpg(cls, v: object) -> object:
+        """Railway/Heroku often set ``postgresql://`` or ``postgres://`` without the async driver."""
+        if not isinstance(v, str):
+            return v
+        s = v.strip()
+        if s.startswith("postgresql+asyncpg://"):
+            return s
+        if s.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + s.removeprefix("postgresql://")
+        if s.startswith("postgres://"):
+            return "postgresql+asyncpg://" + s.removeprefix("postgres://")
+        return s
+
     @field_validator("frontend_app_key", mode="after")
     @classmethod
     def strip_frontend_app_key(cls, v: str) -> str:
