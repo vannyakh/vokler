@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -17,6 +18,19 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
+
+
+def _require_database_url_on_railway() -> None:
+    """Pre-deploy migrations must see Postgres; otherwise Settings falls back to local dev defaults."""
+    if not os.environ.get("RAILWAY_ENVIRONMENT"):
+        return
+    if os.environ.get("DATABASE_URL", "").strip():
+        return
+    raise RuntimeError(
+        "DATABASE_URL is not set for this Railway service. "
+        "Variables → New Variable → Reference → choose your Postgres plugin’s DATABASE_URL "
+        "(or paste the connection string). Pre-deploy runs Alembic before the app starts."
+    )
 
 
 def run_migrations_offline() -> None:
@@ -56,6 +70,7 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
+    _require_database_url_on_railway()
     asyncio.run(run_async_migrations())
 
 
