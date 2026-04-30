@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 const UPSTREAM = (
-  process.env.NEXT_PUBLIC_API_URL ??
+  process.env.API_URL ??          // Railway: reference api service private URL
+  process.env.FASTAPI_URL ??      // alternative server-only alias
+  process.env.NEXT_PUBLIC_API_URL ?? // local dev fallback
   "http://127.0.0.1:8000"
 ).replace(/\/$/, "");
 
@@ -42,7 +44,10 @@ async function proxy(request: NextRequest, method: string) {
     headers.set(key, value);
   });
 
-  const upstreamAppKey = process.env.FRONTEND_APP_KEY ?? process.env.API_FRONTEND_APP_KEY;
+  // Server-only key first; fall back to the public var used by the browser bundle.
+  const upstreamAppKey =
+    process.env.FRONTEND_APP_KEY ??
+    process.env.NEXT_PUBLIC_FRONTEND_APP_KEY;
   if (upstreamAppKey) {
     headers.set("X-App-Key", upstreamAppKey);
   }
