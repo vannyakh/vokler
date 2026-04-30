@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-/** Set API_URL / FASTAPI_URL on the server for /api/proxy when hiding the backend. */
+/** Production: set server-only ``API_URL`` or ``FASTAPI_URL`` for ``/api/proxy`` (not ``NEXT_PUBLIC_*`` unless you accept exposing the API URL in the client bundle). */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",

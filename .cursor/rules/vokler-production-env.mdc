@@ -1,0 +1,12 @@
+---
+description: Production uses server-side env for API; client vars only where the browser runs code
+alwaysApply: true
+---
+
+# Vokler environment variables
+
+- **Production (Next.js server)**: Resolve the backend from **server-only** variables — `API_URL` or `FASTAPI_URL` for `app/api/proxy/route.ts`, and `FRONTEND_APP_KEY` for the upstream `X-App-Key` header. Do not add hardcoded API base URLs; proxy returns 503 if none are set.
+- **Browser / client bundle**: Uses `NEXT_PUBLIC_*` only where code runs in the browser (`NEXT_PUBLIC_API_URL` for direct HTTP and WebSockets, `NEXT_PUBLIC_FRONTEND_APP_KEY`, `NEXT_PUBLIC_USE_PROXY=true` to route API calls through same-origin proxy).
+- **FastAPI (`api/`)**: Production settings from env (`DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`, `APP_ENV=production`, `FRONTEND_APP_KEY`, etc.); no baked-in production URLs.
+
+When changing env handling, keep this split: server secrets and internal URLs stay off `NEXT_PUBLIC_*`.

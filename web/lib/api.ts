@@ -1,4 +1,3 @@
-/** Public API origin (browser + WebSocket). No default — set ``NEXT_PUBLIC_API_URL``. */
 function publicBase(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   if (!raw) {
