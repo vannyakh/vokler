@@ -1,11 +1,33 @@
+function stripCopyPasteQuotes(s: string): string {
+  const t = s.trim();
+  if (t.length >= 2) {
+    const a = t[0];
+    const b = t[t.length - 1];
+    if ((a === '"' && b === '"') || (a === "'" && b === "'")) {
+      return t.slice(1, -1).trim();
+    }
+  }
+  return t;
+}
+
 function publicBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  let raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   if (!raw) {
     throw new Error(
       "Lost connection to the API. Please check your internet connection and try again.",
     );
   }
-  return raw.replace(/\/$/, "");
+  raw = stripCopyPasteQuotes(raw);
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `https://${raw}`;
+  }
+  raw = raw.replace(/\/$/, "");
+  try {
+    new URL(raw);
+  } catch {
+    throw new Error("NEXT_PUBLIC_API_URL is set but is not a valid URL.");
+  }
+  return raw;
 }
 
 function proxyEnabled(): boolean {

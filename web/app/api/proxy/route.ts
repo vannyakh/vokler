@@ -1,14 +1,49 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+/** Railway / dashboard paste sometimes includes wrapping quotes — strip them. */
+function stripCopyPasteQuotes(s: string): string {
+  const t = s.trim();
+  if (t.length >= 2) {
+    const a = t[0];
+    const b = t[t.length - 1];
+    if ((a === '"' && b === '"') || (a === "'" && b === "'")) {
+      return t.slice(1, -1).trim();
+    }
+  }
+  return t;
+}
+
+/**
+ * RAILWAY_PUBLIC_DOMAIN is hostname-only; fetch() needs a full origin.
+ * Also accept values pasted with accidental quotes.
+ */
+function normalizeUpstreamUrl(raw: string): string | null {
+  let u = stripCopyPasteQuotes(raw);
+  if (!u) return null;
+  u = u.replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(u)) {
+    u = `https://${u}`;
+  }
+  try {
+    new URL(u);
+  } catch {
+    return null;
+  }
+  return u;
+}
+
 /** Server-side upstream only — no hardcoded default. */
 function upstreamBase(): string | null {
-  const raw =
-    process.env.API_URL?.trim() ??
-    process.env.FASTAPI_URL?.trim() ??
-    process.env.NEXT_PUBLIC_API_URL?.trim() ??
-    "";
-  if (!raw) return null;
-  return raw.replace(/\/$/, "");
+  for (const v of [
+    process.env.API_URL,
+    process.env.FASTAPI_URL,
+    process.env.NEXT_PUBLIC_API_URL,
+  ]) {
+    if (!v?.trim()) continue;
+    const n = normalizeUpstreamUrl(v);
+    if (n) return n;
+  }
+  return null;
 }
 
 const HOP_BY_HOP = new Set([
@@ -59,10 +94,11 @@ async function proxy(request: NextRequest, method: string) {
     headers.set(key, value);
   });
 
-  // Server-only key first; fall back to the public var used by the browser bundle.
+  // Match FastAPI aliases: FRONTEND_APP_KEY / APP_FRONTEND_KEY; then public client var.
   const upstreamAppKey =
-    process.env.FRONTEND_APP_KEY ??
-    process.env.NEXT_PUBLIC_FRONTEND_APP_KEY;
+    process.env.FRONTEND_APP_KEY?.trim() ||
+    process.env.APP_FRONTEND_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_FRONTEND_APP_KEY?.trim();
   if (upstreamAppKey) {
     headers.set("X-App-Key", upstreamAppKey);
   }

@@ -10,3 +10,13 @@ alwaysApply: true
 - **FastAPI (`api/`)**: Production settings from env (`DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`, `APP_ENV=production`, `FRONTEND_APP_KEY`, etc.); no baked-in production URLs.
 
 When changing env handling, keep this split: server secrets and internal URLs stay off `NEXT_PUBLIC_*`.
+
+## Railway (web service) — common mistakes
+
+- **Typo**: use `NEXT_PUBLIC_FRONTEND_APP_KEY`, not `NEXT_FRONET_APP_KEY`.
+- **`RAILWAY_PUBLIC_DOMAIN` is hostname only** (no `https://`). Either set `API_URL` to `https://${{YourApiService.RAILWAY_PUBLIC_DOMAIN}}` in one variable, or set hostname only — the proxy prepends `https://` automatically.
+- **Do not nest** `NEXT_PUBLIC_API_URL` as `https://${{API_URL}}` when `API_URL` is itself another reference — Railway may not substitute nested references reliably. Set `NEXT_PUBLIC_API_URL` in one shot, e.g. `https://${{YourApiService.RAILWAY_PUBLIC_DOMAIN}}` (same expression you would use for the public API URL).
+- **Reference the API service name** exactly as shown in Railway (slug), e.g. `vokler-api` not `api` unless your service is literally named `api`.
+- **App key from API**: reference `${{YourApiService.FRONTEND_APP_KEY}}` into web `FRONTEND_APP_KEY` or `APP_FRONTEND_KEY` (server-only). The FastAPI app reads `FRONTEND_APP_KEY` / `APP_FRONTEND_KEY`.
+- **`NEXT_PUBLIC_*` must exist at Docker/Railpack build time** for the client bundle; define them on the web service so the build step sees them.
+- **`ENV` / `RAILWAY_ENVIRONMENT_NAME`**: optional; this Next app does not read `ENV` for API config.
