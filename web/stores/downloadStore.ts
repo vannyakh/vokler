@@ -26,6 +26,8 @@ export type ToastFn = (
 ) => void;
 
 const POLL_MS = 2000;
+/** If job stays ``pending`` this long, assume no worker is draining the queue. */
+const MAX_PENDING_POLLS = 90;
 
 export const AUTO_FETCH_DEBOUNCE_MS = 480;
 
@@ -268,10 +270,24 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         st.setSingleJob(created);
         st.setActiveJobId(created.id);
         let last = created;
+        let pendingOnlyPolls = 0;
         while (!["completed", "failed"].includes(last.status)) {
           await new Promise((r) => setTimeout(r, POLL_MS));
           last = await apiFetch<JobDto>(`/jobs/${created.id}`);
           st.setSingleJob(last);
+          if (last.status === "pending") {
+            pendingOnlyPolls += 1;
+            if (pendingOnlyPolls >= MAX_PENDING_POLLS) {
+              addToast(
+                "Download stayed queued too long. The API background worker (ARQ) may not be running, or Redis is misconfigured.",
+                { type: "error", duration: 12000 },
+              );
+              st.setSingleJob(null);
+              return;
+            }
+          } else {
+            pendingOnlyPolls = 0;
+          }
         }
         if (last.status === "failed") {
           addToast(last.error_message ?? "Download failed", { type: "error", duration: 6000 });
@@ -321,10 +337,23 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
       });
       st.setArchiveJob(created);
       let last = created;
+      let archivePendingOnlyPolls = 0;
       while (!["completed", "failed"].includes(last.status)) {
         await new Promise((r) => setTimeout(r, POLL_MS));
         last = await apiFetch<ArchiveJobDto>(`/archive/${created.id}`);
         st.setArchiveJob(last);
+        if (last.status === "pending") {
+          archivePendingOnlyPolls += 1;
+          if (archivePendingOnlyPolls >= MAX_PENDING_POLLS) {
+            addToast(
+              "Archive stayed queued too long. The API background worker (ARQ) may not be running, or Redis is misconfigured.",
+              { type: "error", duration: 12000 },
+            );
+            return;
+          }
+        } else {
+          archivePendingOnlyPolls = 0;
+        }
       }
       if (last.status === "failed") {
         addToast(last.error_message ?? "Archive failed", { type: "error", duration: 6000 });

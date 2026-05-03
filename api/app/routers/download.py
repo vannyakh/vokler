@@ -30,6 +30,40 @@ from app.services.url_parser import detect_platform, url_suggests_youtube_bundle
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_QUEUE_FAILED_DETAIL = (
+    "Could not queue the job: Redis is unreachable or misconfigured, or no ARQ worker is "
+    "processing the queue. Set REDIS_URL and run "
+    "`uv run arq app.workers.tasks.WorkerSettings` (the API Docker image runs this automatically)."
+)
+
+
+async def _mark_download_job_failed_enqueue(
+    db: AsyncSession,
+    job_id: UUID,
+    exc: BaseException,
+) -> None:
+    job = await db.get(DownloadJob, job_id)
+    if job is None:
+        return
+    msg = f"{_QUEUE_FAILED_DETAIL} ({type(exc).__name__}: {exc})"[:4000]
+    job.status = JobStatus.FAILED
+    job.error_message = msg
+    await db.commit()
+
+
+async def _mark_archive_job_failed_enqueue(
+    db: AsyncSession,
+    archive_id: UUID,
+    exc: BaseException,
+) -> None:
+    aj = await db.get(ArchiveJob, archive_id)
+    if aj is None:
+        return
+    msg = f"{_QUEUE_FAILED_DETAIL} ({type(exc).__name__}: {exc})"[:4000]
+    aj.status = JobStatus.FAILED
+    aj.error_message = msg
+    await db.commit()
+
 
 def _resolve_artifact_file(result_path: str, storage_root: Path) -> Path | None:
     """Resolve DB ``result_path`` to a file under ``storage_root`` (handles relative cwd paths)."""
@@ -240,8 +274,12 @@ async def create_download(
     try:
         await _enqueue_download(job.id)
     except Exception as e:
-        # Redis/arq can raise more than OSError; job row is already committed.
         logger.warning("Could not enqueue job %s: %s", job.id, e)
+        await _mark_download_job_failed_enqueue(db, job.id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_QUEUE_FAILED_DETAIL,
+        ) from e
     return JobPublic.model_validate(job)
 
 
@@ -402,6 +440,11 @@ async def create_archive_download(
         await _enqueue_archive(aj.id)
     except Exception as e:
         logger.warning("Could not enqueue archive %s: %s", aj.id, e)
+        await _mark_archive_job_failed_enqueue(db, aj.id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_QUEUE_FAILED_DETAIL,
+        ) from e
     return ArchivePublic.model_validate(aj)
 
 

@@ -1,4 +1,4 @@
-# Production API (FastAPI + uvicorn). Worker: same image, start command
+# Production: FastAPI + ARQ worker (see docker-start.sh). For a worker-only process, run:
 #   uv run arq app.workers.tasks.WorkerSettings
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -16,6 +16,8 @@ COPY pyproject.toml uv.lock ./
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
+COPY docker-start.sh ./
+RUN chmod +x docker-start.sh
 
 RUN uv sync --frozen --no-dev
 
@@ -24,4 +26,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 ENV PORT=8000
 
-CMD ["sh", "-c", "exec uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["./docker-start.sh"]
