@@ -13,7 +13,8 @@ class FrontendAppKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path.rstrip("/") == "/health":
             return await call_next(request)
-        supplied = request.headers.get("x-app-key")
+        # Accept key from header (API/XHR callers) or query param (browser navigation / downloads).
+        supplied = request.headers.get("x-app-key") or request.query_params.get("app_key")
         if not app_key_matches(supplied):
             return JSONResponse(
                 status_code=403,

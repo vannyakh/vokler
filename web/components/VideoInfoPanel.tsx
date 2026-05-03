@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { PreviewResponseDto } from "@/lib/api";
+import { jobFileHref, type JobDto, type PreviewResponseDto } from "@/lib/api";
 import { buildDownloadMenuEntries, type DownloadMenuCategory } from "@/lib/previewFormats";
 
 type Props = {
@@ -15,6 +15,8 @@ type Props = {
   downloadLabel?: string;
   downloadProgress?: number | null;
   singleDownloadCompleted?: boolean;
+  /** Completed job — used to render the persistent "Save to device" link for mobile. */
+  singleJob?: JobDto | null;
 };
 
 const CATEGORY_LABEL: Record<DownloadMenuCategory, string> = {
@@ -73,6 +75,7 @@ export function VideoInfoPanel({
   downloadLabel,
   downloadProgress,
   singleDownloadCompleted = false,
+  singleJob = null,
 }: Props) {
   const thumb = preview.thumbnail;
   const { formats, recommended_format } = preview;
@@ -278,6 +281,31 @@ export function VideoInfoPanel({
                 </svg>
                 Completed
               </div>
+              {singleJob ? (
+                <a
+                  href={jobFileHref(singleJob)}
+                  download
+                  className="flex min-h-[52px] w-full shrink-0 items-center justify-center gap-2 rounded-[var(--vok-radius)] border px-5 text-[14px] font-semibold transition hover:opacity-90 sm:w-auto sm:min-w-[10.5rem]"
+                  style={{
+                    borderColor: "var(--vok-border2)",
+                    background: "var(--vok-surface)",
+                    color: "var(--vok-text)",
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="h-4 w-4 shrink-0"
+                    aria-hidden
+                  >
+                    <path d="M12 3v13M5 14l7 7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M3 21h18" strokeLinecap="round" />
+                  </svg>
+                  Save to device
+                </a>
+              ) : null}
               <button
                 type="button"
                 onClick={() => onChangeUrl?.()}

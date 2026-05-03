@@ -242,6 +242,11 @@ export default function HomePage() {
           singleDownloadCompleted={
             !downloading && (singleJob?.status ?? "").toLowerCase() === "completed"
           }
+          singleJob={
+            !downloading && (singleJob?.status ?? "").toLowerCase() === "completed"
+              ? singleJob
+              : null
+          }
         />
       ) : null}
     </div>

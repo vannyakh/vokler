@@ -93,16 +93,34 @@ async def s3_upload(
     sess = session or aioboto3.Session()
     client_kwargs = _s3_client_kwargs()
     async with sess.client(**client_kwargs) as client:
-        await client.upload_file(str(src), bucket, key)
+        await client.upload_file(
+            str(src),
+            bucket,
+            key,
+            ExtraArgs={
+                # Set at upload time so objects served via public R2/S3 URLs also
+                # trigger a download instead of displaying inline in the browser.
+                "ContentDisposition": f'attachment; filename="{key_suffix}"',
+                "ContentType": "application/octet-stream",
+            },
+        )
     return key
 
 
 def presigned_get_url(bucket: str, key: str, expires_in: int = 3600) -> str:
     """Sync presigned GET; run in a thread from async routes."""
+    filename = key.split("/")[-1]
     client = boto3.client(**_s3_client_kwargs())
     return client.generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket, "Key": key},
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            # Force download on all browsers — critical for mobile Safari which ignores
+            # the HTML `download` attribute on cross-origin links.
+            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentType": "application/octet-stream",
+        },
         ExpiresIn=expires_in,
     )
 

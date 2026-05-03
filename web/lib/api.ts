@@ -167,8 +167,59 @@ function readErrorDetail(text: string): string {
   return detail;
 }
 
-/** Presigned / public URLs: open in a new tab so the browser does not follow 302 with fetch (R2 CORS). */
+/** True when running on a mobile/touch browser (client-side only). */
+function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+/**
+ * Build a browser-navigable href for a completed job file.
+ *
+ * - Proxy mode: returns a same-origin `/api/proxy?forward=/files/{id}` URL — the
+ *   Next.js proxy adds X-App-Key server-side, so no header workaround needed.
+ * - Direct mode: returns the full API URL with `?app_key=…` appended so the
+ *   FrontendAppKeyMiddleware accepts plain browser navigation (no custom headers).
+ */
+export function jobFileHref(job: JobDto): string {
+  return _fileHref(`/files/${job.id}`);
+}
+
+/** Same as `jobFileHref` but for archive ZIPs. */
+export function archiveFileHref(archiveId: string): string {
+  return _fileHref(`/files/archive/${archiveId}`);
+}
+
+function _fileHref(apiPath: string): string {
+  if (proxyEnabled()) {
+    return apiUrl(apiPath);
+  }
+  const base = apiUrl(apiPath);
+  const k = frontendAppKey();
+  if (k) {
+    try {
+      const u = new URL(base);
+      u.searchParams.set("app_key", k);
+      return u.toString();
+    } catch {
+      const sep = base.includes("?") ? "&" : "?";
+      return `${base}${sep}app_key=${encodeURIComponent(k)}`;
+    }
+  }
+  return base;
+}
+
+/**
+ * Presigned / public URLs: open in a new tab on desktop.
+ * On mobile, programmatic clicks are blocked after async polling; navigate via
+ * window.location.assign instead (no user-gesture requirement, and
+ * Content-Disposition: attachment prevents the page from navigating away).
+ */
 function openExternalDownload(url: string, fallbackFilename: string): void {
+  if (isMobileBrowser()) {
+    window.location.assign(url);
+    return;
+  }
   const filename =
     fallbackFilename.replace(/[^\w.\-()\s[\]]/g, "_").trim() || "download";
   const a = document.createElement("a");
@@ -197,6 +248,12 @@ export async function downloadArchiveFileToBrowser(
   const link = await fetchDownloadLinkJson(`/files/archive/${archiveId}/download-link`);
   if (link.mode === "redirect") {
     openExternalDownload(link.url, fallbackFilename || "download.zip");
+    return;
+  }
+  // Mobile: blob tricks (fetch → createObjectURL → a.click) are blocked after async polling.
+  // Navigate directly instead — FastAPI serves Content-Disposition: attachment.
+  if (isMobileBrowser()) {
+    window.location.assign(archiveFileHref(archiveId));
     return;
   }
   const res = await fetch(apiUrl(link.url), { headers: apiAuthHeaders() });
@@ -248,6 +305,12 @@ export async function downloadJobFileToBrowser(
   const link = await fetchDownloadLinkJson(`/files/${job.id}/download-link`);
   if (link.mode === "redirect") {
     openExternalDownload(link.url, fallbackFilename || "download.bin");
+    return;
+  }
+  // Mobile: blob tricks (fetch → createObjectURL → a.click) are blocked after async polling.
+  // Navigate directly instead — FastAPI serves Content-Disposition: attachment.
+  if (isMobileBrowser()) {
+    window.location.assign(jobFileHref(job));
     return;
   }
   const res = await fetch(apiUrl(link.url), { headers: apiAuthHeaders() });
