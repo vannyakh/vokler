@@ -1,8 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono } from "next/font/google";
 
 import { AppHeader } from "@/components/AppHeader";
+import { SeoJsonLd } from "@/components/SeoJsonLd";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { DOWNLOAD_KEYWORDS, SITE_DESCRIPTION } from "@/lib/seo";
+import { getSiteUrl } from "@/lib/siteUrl";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/toast/Toast";
 
@@ -18,8 +21,66 @@ const fontMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vokler",
-  description: "Social video downloader",
+  metadataBase: new URL(getSiteUrl()),
+  title: {
+    default: "Vokler | Free social video download",
+    template: "%s | Vokler",
+  },
+  description: SITE_DESCRIPTION,
+  keywords: [...DOWNLOAD_KEYWORDS],
+  authors: [{ name: "Vokler" }],
+  creator: "Vokler",
+  icons: {
+    icon: [
+      { url: "/logo-vokler.svg", type: "image/svg+xml" },
+      { url: "/vokler-logo.png", sizes: "609x609", type: "image/png" },
+    ],
+    apple: [{ url: "/vokler-logo.png", sizes: "609x609", type: "image/png" }],
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    siteName: "Vokler",
+    title: "Vokler | Free social video download",
+    description: SITE_DESCRIPTION,
+    url: "/",
+    images: [
+      {
+        url: "/vokler-banner.png",
+        width: 1536,
+        height: 1024,
+        alt: "Vokler — download videos from social platforms",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Vokler | Free social video download",
+    description: SITE_DESCRIPTION,
+    images: ["/vokler-banner.png"],
+  },
+  alternates: {
+    canonical: "/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  category: "technology",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4f4f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0f" },
+  ],
 };
 
 export default function RootLayout({
@@ -39,6 +100,7 @@ export default function RootLayout({
         <link href={GOOGLE_FONTS_CSS} rel="stylesheet" />
       </head>
       <body className="min-h-full overflow-x-hidden font-sans">
+        <SeoJsonLd />
         <ThemeProvider>
           <ToastProvider>
             <AppHeader />
