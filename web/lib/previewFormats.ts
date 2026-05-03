@@ -86,9 +86,23 @@ function buildPresetFormatMenuEntries(): DownloadMenuEntry[] {
     {
       format_id: DEFAULT_PRESET_FORMAT_ID,
       category: "video_audio",
-      title: "Best quality (default)",
-      hint: "yt-dlp best merge",
+      title: "Best quality (merged)",
+      hint: "Highest video + audio in sync (up to 4K when the source has it)",
       isRecommended: true,
+    },
+    {
+      format_id: "mp4_2160p",
+      category: "video_audio",
+      title: "MP4 up to 4K (2160p)",
+      hint: null,
+      isRecommended: false,
+    },
+    {
+      format_id: "mp4_1440p",
+      category: "video_audio",
+      title: "MP4 up to 1440p",
+      hint: null,
+      isRecommended: false,
     },
     {
       format_id: "mp4_1080p",
@@ -132,11 +146,23 @@ function buildPresetFormatMenuEntries(): DownloadMenuEntry[] {
  * Builds a SaveFrom-style ordered list: video+audio, then audio-only, then video-only.
  * One entry per resolution/ext bucket where possible.
  */
+function mergePresetEntry(): DownloadMenuEntry {
+  return {
+    format_id: DEFAULT_PRESET_FORMAT_ID,
+    category: "video_audio",
+    title: "Best quality (merged)",
+    hint: "Highest video + audio in sync (up to 4K when the source has it)",
+    isRecommended: true,
+  };
+}
+
 export function buildDownloadMenuEntries(
   formats: MediaFormatRowDto[],
   recommended_format: string | null,
 ): DownloadMenuEntry[] {
   if (formats.length === 0) return buildPresetFormatMenuEntries();
+
+  const mergeFirst = mergePresetEntry();
 
   const vaPool = dedupeVideoPool(
     formats.filter(isVideoWithAudioRow),
@@ -205,23 +231,18 @@ export function buildDownloadMenuEntries(
 
   const vaEntries = vaPool
     .map((r) => toEntry(r, "video_audio"))
-    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id));
+    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id))
+    .map((e) => ({ ...e, isRecommended: false }));
 
-  const audioEntries = audioPicks.map((r) => toEntry(r, "audio"));
+  const audioEntries = audioPicks
+    .map((r) => toEntry(r, "audio"))
+    .map((e) => ({ ...e, isRecommended: false }));
   const voEntries = voPool
     .map((r) => toEntry(r, "video_only"))
-    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id));
+    .sort((a, b) => formatHeight(b.format_id) - formatHeight(a.format_id))
+    .map((e) => ({ ...e, isRecommended: false }));
 
-  const combined = [...vaEntries, ...audioEntries, ...voEntries];
-  if (combined.length > 0) return combined;
-
-  return formats.slice(0, 32).map((row) => ({
-    format_id: row.format_id,
-    category: (isAudioOnlyRow(row) ? "audio" : isVideoOnlyRow(row) ? "video_only" : "video_audio") as DownloadMenuCategory,
-    title: `${(row.ext || "file").toUpperCase()} · ${row.resolution || row.format_note || row.format_id}`,
-    hint: formatSizeHint(row.filesize),
-    isRecommended: recommended_format != null && row.format_id === recommended_format,
-  }));
+  return [mergeFirst, ...vaEntries, ...audioEntries, ...voEntries];
 }
 
 /** Max dimension in pixels from resolution string, or null for audio-only rows. */
@@ -240,6 +261,7 @@ export function parseHeightPx(row: MediaFormatRowDto): number | null {
 }
 
 export const QUALITY_BUCKETS = [
+  { height: 4320, label: "8K" },
   { height: 2160, label: "4K" },
   { height: 1440, label: "1440p" },
   { height: 1080, label: "1080p", best: true as const },

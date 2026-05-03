@@ -24,6 +24,60 @@ function isYoutubeHost(hostname: string): boolean {
   return h.includes("youtube.com") || h.includes("youtu.be");
 }
 
+/** Query params that tie a watch URL to a playlist / mix; strip for single-video flow. */
+function youtubeUrlHasPlaylistContext(u: URL): boolean {
+  return (
+    u.searchParams.has("list") ||
+    u.searchParams.has("start_radio") ||
+    u.searchParams.has("index")
+  );
+}
+
+/**
+ * If this is a YouTube watch (or youtu.be) URL with a video id plus playlist/mix params,
+ * return `https://www.youtube.com/watch?v=…` with only `v` and optional `t` kept.
+ * Idempotent for URLs that are already a plain watch link.
+ */
+export function normalizeYoutubeUrlForSingle(url: string): string {
+  const raw = url.trim();
+  if (!raw) return raw;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw;
+  }
+  if (!isYoutubeHost(u.hostname)) return raw;
+
+  const host = u.hostname.toLowerCase();
+  const listish = youtubeUrlHasPlaylistContext(u);
+
+  if (host.includes("youtu.be")) {
+    const id = u.pathname.split("/").filter(Boolean)[0];
+    if (!id) return raw;
+    if (!listish) return raw;
+    const out = new URL("https://www.youtube.com/watch");
+    out.searchParams.set("v", id);
+    const t = u.searchParams.get("t");
+    if (t) out.searchParams.set("t", t);
+    return out.toString();
+  }
+
+  const p = u.pathname.toLowerCase();
+  if (p.startsWith("/watch")) {
+    const v = u.searchParams.get("v")?.trim();
+    if (!v) return raw;
+    if (!listish) return raw;
+    const out = new URL("https://www.youtube.com/watch");
+    out.searchParams.set("v", v);
+    const t = u.searchParams.get("t");
+    if (t) out.searchParams.set("t", t);
+    return out.toString();
+  }
+
+  return raw;
+}
+
 /** Shape of a YouTube URL for tab hints (order: playlist → profile/channel → single video). */
 export type YoutubeUrlKind = "playlist" | "profile" | "single";
 
@@ -60,10 +114,6 @@ export function youtubeUrlKind(url: string): YoutubeUrlKind | null {
 
 export type UrlTabMode = "single" | "multi" | "playlist" | "profile";
 
-/**
- * When the active tab does not match the YouTube URL shape, return a short message for a toast.
- * Non-YouTube links return null (any tab may apply).
- */
 export function previewModeMismatchMessage(mode: UrlTabMode, url: string): string | null {
   if (mode === "multi") return null;
   const t = url.trim();

@@ -54,9 +54,16 @@ html[data-theme="light"] {
   --vok-btn-gradient-end: #7c3aed;
 }
 
+/* Loaded via app/layout.tsx (Google Fonts). Use font-sans / font-mono or these tokens. */
 @theme inline {
-  --font-sans: var(--font-syne), ui-sans-serif, system-ui;
+  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  --font-crafty-girls: "Crafty Girls", cursive;
+  --font-kantumruy-pro: "Kantumruy Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-monsieur-la-doulaise: "Monsieur La Doulaise", cursive;
+  --font-preahvihear: "Preahvihear", ui-sans-serif, system-ui, sans-serif;
+  --font-sedgwick-ave-display: "Sedgwick Ave Display", ui-sans-serif, system-ui, sans-serif;
+  --font-zen-kaku-gothic-new: "Zen Kaku Gothic New", ui-sans-serif, system-ui, sans-serif;
 }
 
 html[data-theme="light"] {

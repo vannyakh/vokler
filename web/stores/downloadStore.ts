@@ -12,6 +12,7 @@ import {
 import { safeDownloadFilename, safeZipFilename } from "@/lib/download/filenames";
 import {
   looksLikeHttpUrl,
+  normalizeYoutubeUrlForSingle,
   parseUrls,
   previewModeMismatchMessage,
 } from "@/lib/download/urlHelpers";
@@ -120,14 +121,17 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
 
   setUrl: (url) => set({ url }),
 
-  onUrlInputChange: (url) =>
+  onUrlInputChange: (url) => {
+    const mode = get().mode;
+    const next = mode === "multi" ? url : normalizeYoutubeUrlForSingle(url);
     set({
-      url,
+      url: next,
       preview: null,
       sourceUrl: null,
       autoPreviewBlockedKey: null,
       ...initialJobs,
-    }),
+    });
+  },
 
   setSelectedFormatId: (selectedFormatId) => set({ selectedFormatId }),
 
@@ -159,7 +163,12 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
   fetchInfoManual: (addToast) => {
     cancelAutoFetchDebounce();
     const { mode, url } = get();
-    const primary = mode === "multi" ? parseUrls(url)[0] : url.trim();
+    const primaryRaw = mode === "multi" ? parseUrls(url)[0] : url.trim();
+    const primary =
+      mode === "multi" ? (primaryRaw ?? "").trim() : normalizeYoutubeUrlForSingle(primaryRaw);
+    if (primaryRaw && mode !== "multi" && primary !== primaryRaw) {
+      set({ url: primary });
+    }
     if (!primary) return;
     if (mode !== "multi" && !looksLikeHttpUrl(primary)) {
       addToast("Enter a valid http(s) link", { type: "warning" });
@@ -173,9 +182,14 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
     void get().runFetchPreview(primary, addToast);
   },
 
-  runFetchPreview: async (primary, addToast) => {
+  runFetchPreview: async (primaryIn, addToast) => {
     if (get().downloading) return;
     const mode = get().mode;
+    const primary =
+      mode === "multi" ? primaryIn.trim() : normalizeYoutubeUrlForSingle(primaryIn.trim());
+    if (primary !== primaryIn.trim() && mode !== "multi") {
+      set({ url: primary });
+    }
     const mismatch = previewModeMismatchMessage(mode, primary);
     if (mismatch) {
       addToast(mismatch, { type: "warning", duration: 6000 });
@@ -209,13 +223,15 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
         updates.sourceUrl = canonical;
         updates.url = "";
       }
+      // Prefer merged download (preset) unless API recommends a muxed row that exists in the table.
+      const rec = data.recommended_format?.trim();
+      const recInTable = Boolean(rec && data.formats.some((f) => f.format_id === rec));
       const def =
         data.formats.length === 0
           ? DEFAULT_PRESET_FORMAT_ID
-          : data.recommended_format &&
-              data.formats.some((f) => f.format_id === data.recommended_format)
-            ? data.recommended_format
-            : data.formats[0]?.format_id ?? "";
+          : recInTable
+            ? rec!
+            : DEFAULT_PRESET_FORMAT_ID;
       updates.selectedFormatId = def;
       set(updates);
     } catch (e) {
@@ -326,8 +342,9 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
   pasteFromClipboard: (text: string) => {
     const mode = get().mode;
     if (!text) return;
+    const trimmed = text.trim();
     set({
-      url: mode === "multi" ? text : text.trim(),
+      url: mode === "multi" ? text : normalizeYoutubeUrlForSingle(trimmed),
       preview: null,
       sourceUrl: null,
       autoPreviewBlockedKey: null,

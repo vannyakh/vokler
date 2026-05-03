@@ -305,10 +305,11 @@ export function setAccessToken(token: string | null): void {
   else localStorage.removeItem("vokler_access_token");
 }
 
-/** WebSocket URL (direct to FastAPI). Configure CORS / mixed-content for your deploy. */
 export function wsUrlForJob(jobId: string): string {
-  const base = publicBase().replace(/^http/, "ws");
+  const httpBase = publicBase();
+  // Must not use .replace(/^http/, "wss") — that turns "https://" into "wsss://".
+  const wsBase = httpBase.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
   const k = frontendAppKey();
   const q = k ? `?app_key=${encodeURIComponent(k)}` : "";
-  return `${base}/ws/jobs/${jobId}${q}`;
+  return `${wsBase}/ws/jobs/${jobId}${q}`;
 }

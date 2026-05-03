@@ -16,13 +16,66 @@ from yt_dlp.utils import DownloadError
 
 logger = logging.getLogger(__name__)
 
+_YTDLP_ERROR_PATTERNS: list[tuple[str, str]] = [
+    (
+        r"Sign in to confirm you're not a bot",
+        "YouTube requires sign-in to access this video (bot-detection). "
+        "The server does not have saved YouTube cookies. "
+        "Try a different video or a direct file URL.",
+    ),
+    (
+        r"This video is only available to Music Premium members",
+        "This video is only available to YouTube Music Premium subscribers.",
+    ),
+    (
+        r"This video is unavailable",
+        "This video is unavailable.",
+    ),
+    (
+        r"Video unavailable",
+        "This video is unavailable.",
+    ),
+    (
+        r"Private video",
+        "This video is private.",
+    ),
+    (
+        r"This video has been removed",
+        "This video has been removed.",
+    ),
+    (
+        r"This live event will begin in",
+        "This live stream has not started yet.",
+    ),
+    (
+        r"is not a valid URL",
+        "The URL provided is not supported or could not be recognised.",
+    ),
+]
+
+
+def _humanize_ytdlp_error(exc: BaseException) -> str:
+    """Return a concise, user-friendly message for common yt-dlp errors."""
+    raw = str(exc)
+    for pattern, friendly in _YTDLP_ERROR_PATTERNS:
+        if re.search(pattern, raw, re.IGNORECASE):
+            return friendly
+    return raw
+
+# YouTube DASH: best 1080p is often VP9/WebM video + m4a/opus audio — do not require ext=mp4 on
+# bestvideo first or yt-dlp falls back to a single low progressive file (~360p).
+# bestvideo+bestaudio merges with FFmpeg; merge_output_format=mp4 when muxing to MP4.
 FORMAT_MAP: dict[str, str] = {
-    "mp4_1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080]",
-    "mp4_720p": "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720]",
-    "mp4_480p": "bestvideo[height<=480][ext=mp4]+bestaudio/best",
+    # Height caps apply to the video stream only; audio is always merged for sync playback.
+    "mp4_2160p": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
+    "mp4_1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
+    "mp4_1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+    "mp4_720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+    "mp4_480p": "bestvideo[height<=480]+bestaudio/best",
     "mp3_320": "bestaudio/best",
     "mp3_192": "bestaudio/best",
-    "original": "best",
+    # No height cap — merges best separate video + audio (often 4K VP9 + m4a on YouTube).
+    "original": "bestvideo+bestaudio/bestvideo+ba/best",
 }
 
 POSTPROCESSORS: dict[str, list[dict[str, Any]]] = {
@@ -72,6 +125,61 @@ def _resolution_label(f: dict[str, Any]) -> str:
     return "—"
 
 
+def _row_height_px(r: dict[str, Any]) -> int:
+    res = r.get("resolution") or ""
+    if "×" in res:
+        try:
+            return int(res.split("×")[-1].replace("p", "").strip() or "0")
+        except ValueError:
+            return 0
+    if res.endswith("p"):
+        try:
+            return int(res[:-1])
+        except ValueError:
+            return 0
+    return 0
+
+
+def _row_has_video(r: dict[str, Any]) -> bool:
+    vc = (r.get("vcodec") or "").lower()
+    return bool(vc) and vc not in ("none", "")
+
+
+def _row_has_audio(r: dict[str, Any]) -> bool:
+    ac = (r.get("acodec") or "").lower()
+    return bool(ac) and ac not in ("none", "")
+
+
+def _row_muxed_video_audio(r: dict[str, Any]) -> bool:
+    return _row_has_video(r) and _row_has_audio(r)
+
+
+def _row_video_only(r: dict[str, Any]) -> bool:
+    return _row_has_video(r) and not _row_has_audio(r)
+
+
+def _format_row_sort_key(r: dict[str, Any]) -> tuple[int, int, int]:
+    """Muxed A+V first (by height), then video-only (by height), then audio / other."""
+    tier = 0
+    if _row_muxed_video_audio(r):
+        tier = 2
+    elif _row_video_only(r):
+        tier = 1
+    h = _row_height_px(r)
+    fs = int(r.get("filesize") or 0)
+    return (-tier, -h, -fs)
+
+
+def _pick_recommended_muxed_format_id(rows: list[dict[str, Any]]) -> str | None:
+    """Prefer highest muxed stream so we do not default to a silent DASH video row."""
+    muxed = [r for r in rows if _row_muxed_video_audio(r)]
+    if not muxed:
+        return None
+    muxed.sort(key=lambda r: (_row_height_px(r), int(r.get("filesize") or 0)), reverse=True)
+    fid = muxed[0].get("format_id")
+    return str(fid) if fid is not None else None
+
+
 def _build_format_rows(info: dict[str, Any], limit: int = 48) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -97,23 +205,7 @@ def _build_format_rows(info: dict[str, Any], limit: int = 48) -> list[dict[str, 
             },
         )
 
-    def sort_key(r: dict[str, Any]) -> tuple[int, int]:
-        fs = r.get("filesize") or 0
-        h = 0
-        res = r.get("resolution") or ""
-        if "×" in res:
-            try:
-                h = int(res.split("×")[-1].replace("p", ""))
-            except ValueError:
-                h = 0
-        elif res.endswith("p"):
-            try:
-                h = int(res[:-1])
-            except ValueError:
-                h = 0
-        return (-h, -fs)
-
-    rows.sort(key=sort_key)
+    rows.sort(key=_format_row_sort_key)
     return rows[:limit]
 
 
@@ -130,10 +222,12 @@ def extract_preview_sync(url: str) -> dict[str, Any]:
             if not isinstance(info, dict):
                 raise RuntimeError("Unexpected extractor response")
     except (DownloadError, OSError, ValueError) as e:
-        raise RuntimeError(str(e) or "Failed to read media info") from e
+        raise RuntimeError(_humanize_ytdlp_error(e) or "Failed to read media info") from e
 
     formats = _build_format_rows(info)
     dur = info.get("duration")
+    # Do not use info["format_id"] — it is yt-dlp's default combined format (often low, e.g. 360p).
+    recommended = _pick_recommended_muxed_format_id(formats)
     return {
         "title": info.get("title"),
         "duration_seconds": int(dur) if dur is not None else None,
@@ -141,7 +235,7 @@ def extract_preview_sync(url: str) -> dict[str, Any]:
         "uploader": info.get("uploader") or info.get("channel"),
         "thumbnail": info.get("thumbnail") or (info.get("thumbnails") or [{}])[-1].get("url"),
         "webpage_url": info.get("webpage_url") or info.get("original_url") or url,
-        "recommended_format": str(info.get("format_id")) if info.get("format_id") else None,
+        "recommended_format": recommended,
         "formats": formats,
     }
 
@@ -259,7 +353,7 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
         if not isinstance(info, dict):
             raise RuntimeError("Unexpected extractor response")
     except (DownloadError, OSError, ValueError) as e:
-        raise RuntimeError(str(e) or "Failed to list media URLs") from e
+        raise RuntimeError(_humanize_ytdlp_error(e) or "Failed to list media URLs") from e
 
     title = (
         info.get("playlist_title")
@@ -343,7 +437,7 @@ def extract_flat_entries_sync(url: str, max_entries: int = 100) -> tuple[list[di
         if not isinstance(info, dict):
             raise RuntimeError("Unexpected extractor response")
     except (DownloadError, OSError, ValueError) as e:
-        raise RuntimeError(str(e) or "Failed to list media URLs") from e
+        raise RuntimeError(_humanize_ytdlp_error(e) or "Failed to list media URLs") from e
 
     title_hint = _bundle_title_from_info(info)
     entries = info.get("entries")
@@ -440,10 +534,11 @@ class YtDlpDownloader:
     ) -> tuple[str, list[dict[str, Any]], bool]:
         sel = self.format_selector
         if sel in FORMAT_MAP:
+            merge_mp4 = sel.startswith("mp4_") or sel == "original"
             return (
                 FORMAT_MAP[sel],
                 list(POSTPROCESSORS.get(sel, [])),
-                sel.startswith("mp4_"),
+                merge_mp4,
             )
         return sel, [], False
 
@@ -464,6 +559,9 @@ class YtDlpDownloader:
         }
         if merge_mp4:
             ydl_opts["merge_output_format"] = "mp4"
+        # Prefer highest resolution / quality when several DASH streams match (e.g. 2160 vs 1080).
+        if merge_mp4 or "+" in spec:
+            ydl_opts["format_sort"] = ["res", "codec", "quality", "br"]
         if self.progress_hook is not None:
             ydl_opts["progress_hooks"] = [self.progress_hook]
 
@@ -483,7 +581,7 @@ class YtDlpDownloader:
             return out_path, metadata, tmp_dir
         except (DownloadError, OSError, ValueError) as e:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise RuntimeError(str(e) or "yt-dlp download failed") from e
+            raise RuntimeError(_humanize_ytdlp_error(e) or "yt-dlp download failed") from e
         except Exception:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
