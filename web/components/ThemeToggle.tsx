@@ -17,6 +17,11 @@ export function ThemeToggle() {
   const toggle = useCallback(() => {
     setTheme(isDark ? "light" : "dark");
   }, [isDark, setTheme]);
+  const a11y = mounted
+    ? isDark
+      ? { label: "Switch to light theme", title: "Light theme" }
+      : { label: "Switch to dark theme", title: "Dark theme" }
+    : { label: "Toggle color theme", title: "Theme" };
 
   return (
     <button
@@ -28,8 +33,8 @@ export function ThemeToggle() {
         borderColor: "var(--vok-border)",
         color: "var(--vok-muted)",
       }}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      title={isDark ? "Light theme" : "Dark theme"}
+      aria-label={a11y.label}
+      title={a11y.title}
       disabled={!mounted}
     >
       {!mounted ? (
