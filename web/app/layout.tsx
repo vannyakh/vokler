@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono } from "next/font/google";
 
+import { AppHeader } from "@/components/AppHeader";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/toast/Toast";
 
 const GOOGLE_FONTS_CSS =
-  "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Crafty+Girls&family=Kantumruy+Pro:ital,wght@0,100..700;1,100..700&family=Monsieur+La+Doulaise&family=Preahvihear&family=Sedgwick+Ave+Display&family=Zen+Kaku+Gothic+New&display=swap";
+  "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap";
 
 /** JetBrains Mono — monospace (Google Fonts: 400, 500). */
 const fontMono = JetBrains_Mono({
@@ -37,11 +39,12 @@ export default function RootLayout({
         <link href={GOOGLE_FONTS_CSS} rel="stylesheet" />
       </head>
       <body className="min-h-full overflow-x-hidden font-sans">
-        <ToastProvider>
-        {/* <Script id="vokler-theme-init" strategy="beforeInteractive"> */}
-          {children}
-        {/* </Script> */}
+        <ThemeProvider>
+          <ToastProvider>
+            <AppHeader />
+            {children}
           </ToastProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
