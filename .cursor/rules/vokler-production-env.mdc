@@ -8,6 +8,7 @@ alwaysApply: true
 - **Production (Next.js server)**: Resolve the backend from **server-only** variables — `API_URL` or `FASTAPI_URL` for `app/api/proxy/route.ts`, and `FRONTEND_APP_KEY` for the upstream `X-App-Key` header. Do not add hardcoded API base URLs; proxy returns 503 if none are set.
 - **Browser / client bundle**: Uses `NEXT_PUBLIC_*` only where code runs in the browser (`NEXT_PUBLIC_API_URL` for direct HTTP and WebSockets, `NEXT_PUBLIC_FRONTEND_APP_KEY`, `NEXT_PUBLIC_USE_PROXY=true` to route API calls through same-origin proxy).
 - **FastAPI (`api/`)**: Production settings from env (`DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`, `APP_ENV=production`, `FRONTEND_APP_KEY`, etc.); no baked-in production URLs.
+- **YouTube / yt-dlp**: If downloads fail with bot-check errors on your host IP, set **`YTDLP_COOKIES_FILE`** on the API to an absolute path of a Netscape `cookies.txt` exported while logged into YouTube (mount the file in Docker/Railway). Keep **`yt-dlp`** upgraded (`uv lock --upgrade-package yt-dlp`).
 
 When changing env handling, keep this split: server secrets and internal URLs stay off `NEXT_PUBLIC_*`.
 

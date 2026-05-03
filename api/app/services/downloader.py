@@ -14,14 +14,20 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 import yt_dlp
 from yt_dlp.utils import DownloadError
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
+
+_ytdlp_cookie_missing_logged = False
 
 _YTDLP_ERROR_PATTERNS: list[tuple[str, str]] = [
     (
-        r"Sign in to confirm you're not a bot",
-        "YouTube requires sign-in to access this video (bot-detection). "
-        "The server does not have saved YouTube cookies. "
-        "Try a different video or a direct file URL.",
+        # Straight and curly apostrophe (YouTube / yt-dlp message variants)
+        r"Sign in to confirm you[\u2019']re not a bot",
+        "YouTube blocked this request (bot check). On a server or datacenter IP you usually need "
+        "Netscape cookies from a logged-in browser: set env YTDLP_COOKIES_FILE to that file’s path "
+        "(see https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies ). "
+        "Then restart the API. Keep yt-dlp updated.",
     ),
     (
         r"This video is only available to Music Premium members",
@@ -80,13 +86,27 @@ FORMAT_MAP: dict[str, str] = {
 
 def ydl_base_opts() -> dict[str, Any]:
     """Options merged into every YoutubeDL session (preview, flat extract, download)."""
-    return {
+    global _ytdlp_cookie_missing_logged
+
+    opts: dict[str, Any] = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "ios"],
+                # Prefer mobile / non-web clients first; ``web`` often hits SABR / bot checks on DC IPs.
+                "player_client": ["ios", "android", "mweb", "web"],
             },
         },
     }
+
+    cookie_path = (settings.ytdlp_cookies_file or "").strip()
+    if cookie_path:
+        p = Path(cookie_path).expanduser()
+        if p.is_file():
+            opts["cookiefile"] = str(p.resolve())
+        elif not _ytdlp_cookie_missing_logged:
+            _ytdlp_cookie_missing_logged = True
+            logger.warning("YTDLP_COOKIES_FILE is set but not a readable file: %s", cookie_path)
+
+    return opts
 
 POSTPROCESSORS: dict[str, list[dict[str, Any]]] = {
     "mp3_320": [

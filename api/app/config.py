@@ -133,6 +133,15 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
 
+    ytdlp_cookies_file: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("YTDLP_COOKIES_FILE", "YT_DLP_COOKIES_FILE"),
+        description=(
+            "Optional path to a Netscape-format cookies.txt exported while logged into YouTube. "
+            "Strongly recommended on VPS/datacenter IPs where YouTube returns bot-check errors."
+        ),
+    )
+
     @property
     def arq_redis_settings(self):  # type: ignore[return]
         """Pre-parsed arq RedisSettings built from ``redis_url``."""
