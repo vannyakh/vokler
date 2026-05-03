@@ -57,6 +57,10 @@ export const en = {
   downloadFailed: "Download failed",
   archiveFailed: "Archive failed",
   couldNotLoad: "Could not load video info",
-} as const;
+};
 
+/**
+ * English is the source of keys; values are plain `string` / functions so locale
+ * files (e.g. Khmer) are assignable without matching English literals exactly.
+ */
 export type Messages = typeof en;
