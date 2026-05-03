@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 
 import { VideoInfoPanel } from "@/components/VideoInfoPanel";
 import { useToast } from "@/components/ui/toast/Toast";
+import { useT } from "@/lib/i18n";
 import { looksLikeHttpUrl } from "@/lib/download/urlHelpers";
 import { useJobProgressWebSocket } from "@/lib/useWebSocket";
 import { type JobDto, wsUrlForJob } from "@/lib/api";
@@ -11,6 +12,7 @@ import {
   autoPreviewAttemptKey,
   cancelAutoFetchDebounce,
   scheduleAutoFetchDebounce,
+  type ToastFn,
   useDownloadStore,
 } from "@/stores/downloadStore";
 
@@ -21,7 +23,6 @@ const PLATFORMS: { label: string; dot: string }[] = [
   { label: "Twitter", dot: "#1da1f2" },
   { label: "Facebook", dot: "#1877f2" },
   { label: "Vimeo", dot: "#1ab7ea" },
-  { label: "+ more", dot: "#555" },
 ];
 
 function ClipboardIcon({ className }: { className?: string }) {
@@ -51,7 +52,6 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-/** Fetch / preview — magnifying glass, icon-only control beside the URL field. */
 function FetchIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -72,6 +72,7 @@ function FetchIcon({ className }: { className?: string }) {
 
 export default function HomePage() {
   const { addToast } = useToast();
+  const t = useT();
 
   const url = useDownloadStore((s) => s.url);
   const preview = useDownloadStore((s) => s.preview);
@@ -89,6 +90,26 @@ export default function HomePage() {
   const runFetchPreview = useDownloadStore((s) => s.runFetchPreview);
   const runDownload = useDownloadStore((s) => s.runDownload);
   const pasteFromClipboardStore = useDownloadStore((s) => s.pasteFromClipboard);
+
+  /**
+   * Wrap addToast to translate known English fallback messages from the store.
+   * API error messages (e.g. server-returned strings) are passed through as-is.
+   */
+  const tAddToast = useCallback(
+    (msg: string, opts?: Parameters<ToastFn>[1]) => {
+      const map: Record<string, string> = {
+        "Video ready — check the new tab or your downloads folder": t.videoReady,
+        "ZIP ready — check the new tab or your downloads folder": t.zipReady,
+        "Download failed": t.downloadFailed,
+        "Archive failed": t.archiveFailed,
+        "Could not load video info": t.couldNotLoad,
+        "Enter a valid http(s) link": t.invalidUrl,
+        "Clipboard access denied or empty": t.clipboardDenied,
+      };
+      addToast(map[msg] ?? msg, opts);
+    },
+    [addToast, t],
+  );
 
   const onWsProgress = useCallback(
     (data: { job_id?: string; progress?: number; status?: string }) => {
@@ -124,32 +145,32 @@ export default function HomePage() {
       cancelAutoFetchDebounce();
       return;
     }
-    scheduleAutoFetchDebounce(primary, (p) => void runFetchPreview(p, addToast));
+    scheduleAutoFetchDebounce(primary, (p) => void runFetchPreview(p, tAddToast));
     return () => cancelAutoFetchDebounce();
-  }, [url, downloading, loadingInfo, autoPreviewBlockedKey, runFetchPreview, addToast]);
+  }, [url, downloading, loadingInfo, autoPreviewBlockedKey, runFetchPreview, tAddToast]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
       if (text) pasteFromClipboardStore(text);
     } catch {
-      addToast("Clipboard access denied or empty", { type: "warning" });
+      tAddToast(t.clipboardDenied, { type: "warning" });
     }
-  }, [addToast, pasteFromClipboardStore]);
+  }, [tAddToast, t.clipboardDenied, pasteFromClipboardStore]);
 
   return (
     <div className="mx-auto max-w-[780px] px-5 pb-16">
       <div className="mb-10 text-center">
         <h1 className="mb-2.5 font-mono text-[clamp(22px,4.2vw,34px)] font-semibold leading-[1.2] tracking-tight">
-          Download from{" "}
+          {t.heroLine1}{" "}
           <span className="bg-gradient-to-r from-[var(--vok-accent)] to-[var(--vok-accent3)] bg-clip-text text-transparent">
-            any platform,
+            {t.heroHighlight}
           </span>
           <br />
-          any format, instantly
+          {t.heroLine2}
         </h1>
         <p className="font-mono text-[13px] font-normal sm:text-[14px]" style={{ color: "var(--vok-muted)" }}>
-          YouTube · TikTok · Instagram · Twitter · Facebook · Vimeo · and more
+          {t.heroSub}
         </p>
       </div>
 
@@ -169,6 +190,16 @@ export default function HomePage() {
             {p.label}
           </div>
         ))}
+        <div
+          className="flex cursor-default items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium"
+          style={{
+            background: "var(--vok-surface2)",
+            borderColor: "var(--vok-border)",
+            color: "var(--vok-muted)",
+          }}
+        >
+          {t.morePlatforms}
+        </div>
       </div>
 
       {/* URL input row */}
@@ -182,7 +213,7 @@ export default function HomePage() {
           <div className="relative min-w-0 flex-1">
             <input
               type="url"
-              placeholder="https://youtube.com/watch?v=…"
+              placeholder={t.urlPlaceholder}
               value={url}
               onChange={(e) => onUrlInputChange(e.target.value)}
               disabled={downloading || loadingInfo}
@@ -209,20 +240,20 @@ export default function HomePage() {
                 background: "var(--vok-surface3)",
                 border: "1px solid var(--vok-border)",
               }}
-              aria-label="Paste from clipboard"
-              title="Paste from clipboard"
+              aria-label={t.pasteClipboard}
+              title={t.pasteClipboard}
             >
               <ClipboardIcon className="h-[18px] w-[18px]" />
             </button>
           </div>
           <button
             type="button"
-            onClick={() => fetchInfoManual(addToast)}
+            onClick={() => fetchInfoManual(tAddToast)}
             disabled={downloading || loadingInfo || !url.trim()}
             className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[var(--vok-radius)] text-white transition hover:opacity-90 disabled:opacity-50"
             style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
-            aria-label={loadingInfo ? "Fetching video info" : "Fetch video info"}
-            title={loadingInfo ? "Fetching…" : "Fetch video info"}
+            aria-label={loadingInfo ? t.fetchingInfo : t.fetchInfo}
+            title={loadingInfo ? t.fetchingInfo : t.fetchInfo}
           >
             {loadingInfo ? <Spinner className="h-5 w-5" /> : <FetchIcon className="h-5 w-5" />}
           </button>
@@ -235,7 +266,7 @@ export default function HomePage() {
           preview={preview}
           selectedFormatId={selectedFormatId}
           onSelectFormat={setSelectedFormatId}
-          onDownload={() => void runDownload(addToast)}
+          onDownload={() => void runDownload(tAddToast)}
           onChangeUrl={clearPreviewSession}
           downloading={downloading}
           downloadProgress={singleJob ? singleJob.progress : null}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { jobFileHref, type JobDto, type PreviewResponseDto } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { buildDownloadMenuEntries, type DownloadMenuCategory } from "@/lib/previewFormats";
 
 type Props = {
@@ -17,12 +18,6 @@ type Props = {
   singleDownloadCompleted?: boolean;
   /** Completed job — used to render the persistent "Save to device" link for mobile. */
   singleJob?: JobDto | null;
-};
-
-const CATEGORY_LABEL: Record<DownloadMenuCategory, string> = {
-  video_audio: "Video with sound",
-  audio: "Audio only",
-  video_only: "Video only (no sound)",
 };
 
 function PlayIcon({ className }: { className?: string }) {
@@ -77,6 +72,8 @@ export function VideoInfoPanel({
   singleDownloadCompleted = false,
   singleJob = null,
 }: Props) {
+  const t = useT();
+
   const thumb = preview.thumbnail;
   const { formats, recommended_format } = preview;
   const bundleItems = preview.bundle_items;
@@ -84,6 +81,15 @@ export function VideoInfoPanel({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenEffective = menuOpen && !singleDownloadCompleted;
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const categoryLabel: Record<DownloadMenuCategory, string> = useMemo(
+    () => ({
+      video_audio: t.catVideoAudio,
+      audio: t.catAudio,
+      video_only: t.catVideoOnly,
+    }),
+    [t],
+  );
 
   const menu = useMemo(
     () => buildDownloadMenuEntries(formats, recommended_format ?? null),
@@ -143,7 +149,7 @@ export function VideoInfoPanel({
       <div className="max-sm:pb-0 sm:p-5 sm:pb-5 md:p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-2 gap-y-1">
           <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--vok-muted)" }}>
-            Preview
+            {t.preview}
           </p>
           {onChangeUrl ? (
             <button
@@ -153,7 +159,7 @@ export function VideoInfoPanel({
               className="text-[12px] font-medium underline-offset-2 transition hover:underline disabled:opacity-50"
               style={{ color: "var(--vok-muted)" }}
             >
-              Change URL
+              {t.changeUrl}
             </button>
           ) : null}
         </div>
@@ -162,10 +168,10 @@ export function VideoInfoPanel({
           <div className="space-y-3">
             <div>
               <h2 id="vok-preview-heading" className="text-[17px] font-semibold leading-snug sm:text-lg">
-                {preview.bundle_title ?? preview.title ?? "Playlist"}
+                {preview.bundle_title ?? preview.title ?? t.playlist}
               </h2>
               <p className="mt-0.5 text-[13px]" style={{ color: "var(--vok-muted)" }}>
-                {bundleItems.length} video{bundleItems.length !== 1 ? "s" : ""}
+                {t.videoCount(bundleItems.length)}
                 {preview.uploader ? ` · ${preview.uploader}` : ""}
               </p>
             </div>
@@ -173,7 +179,7 @@ export function VideoInfoPanel({
               className="max-h-[min(52vh,440px)] divide-y divide-[var(--vok-border)] overflow-y-auto max-sm:rounded-none max-sm:border-0 max-sm:bg-transparent sm:rounded-[var(--vok-radius)] sm:border sm:bg-[var(--vok-surface2)]"
               style={{ borderColor: "var(--vok-border)" }}
               role="list"
-              aria-label="Videos in this bundle"
+              aria-label={t.preview}
             >
               {bundleItems.map((item, i) => (
                 <li
@@ -243,13 +249,13 @@ export function VideoInfoPanel({
             )}
             <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
               <h2 id="vok-preview-heading" className="text-[17px] font-semibold leading-snug sm:text-lg">
-                {preview.title ?? "Untitled"}
+                {preview.title ?? t.untitled}
               </h2>
               <p className="text-[13px]" style={{ color: "var(--vok-muted)" }}>
                 {preview.duration_label ??
                   (preview.duration_seconds != null ? `${preview.duration_seconds}s` : null)}
                 {preview.duration_label || preview.duration_seconds != null ? " · " : null}
-                {preview.uploader ?? "Unknown channel"}
+                {preview.uploader ?? t.unknownChannel}
               </p>
             </div>
           </div>
@@ -279,7 +285,7 @@ export function VideoInfoPanel({
                 >
                   <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                Completed
+                {t.completed}
               </div>
               {singleJob ? (
                 <a
@@ -303,7 +309,7 @@ export function VideoInfoPanel({
                     <path d="M12 3v13M5 14l7 7 7-7" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M3 21h18" strokeLinecap="round" />
                   </svg>
-                  Save to device
+                  {t.saveToDevice}
                 </a>
               ) : null}
               <button
@@ -316,7 +322,7 @@ export function VideoInfoPanel({
                   color: "var(--vok-text)",
                 }}
               >
-                Redownload video
+                {t.redownload}
               </button>
             </div>
           ) : (
@@ -339,7 +345,7 @@ export function VideoInfoPanel({
                       <PlayIcon className="h-4 w-4 shrink-0 text-sky-400" />
                     ) : null}
                     <span className="truncate">
-                      {selectedEntry ? selectedEntry.title : "Choose format"}
+                      {selectedEntry ? selectedEntry.title : t.chooseFormat}
                       {selectedEntry?.hint ? (
                         <span className="font-normal" style={{ color: "var(--vok-muted)" }}>
                           {" "}
@@ -360,7 +366,7 @@ export function VideoInfoPanel({
                       boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
                     }}
                     role="listbox"
-                    aria-label="Download format"
+                    aria-label={t.chooseFormat}
                   >
                     {grouped.map(({ category, items }) =>
                       items.length === 0 ? null : (
@@ -373,7 +379,7 @@ export function VideoInfoPanel({
                               borderBottom: "1px solid var(--vok-border)",
                             }}
                           >
-                            {CATEGORY_LABEL[category]}
+                            {categoryLabel[category]}
                           </div>
                           {items.map((entry) => {
                             const selected = entry.format_id === selectedFormatId;
@@ -414,7 +420,7 @@ export function VideoInfoPanel({
                                     className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase"
                                     style={{ background: "var(--vok-accent)", color: "#fff" }}
                                   >
-                                    Best
+                                    {t.best}
                                   </span>
                                 ) : null}
                               </button>
@@ -440,8 +446,8 @@ export function VideoInfoPanel({
                 {downloading
                   ? downloadProgress != null
                     ? `${Math.round(Math.min(100, Math.max(0, downloadProgress)))}%`
-                    : "…"
-                  : (downloadLabel ?? "Download")}
+                    : t.fetching
+                  : (downloadLabel ?? t.download)}
               </button>
             </>
           )}
@@ -468,11 +474,11 @@ export function VideoInfoPanel({
 
         {!singleDownloadCompleted ? (
           <p className="mt-3 text-[11px] leading-relaxed" style={{ color: "var(--vok-muted2)" }}>
-            Choose a format, then download. Video-only options have no audio — useful for editing.
+            {t.formatHint}
           </p>
         ) : (
           <p className="mt-3 text-[11px] leading-relaxed" style={{ color: "var(--vok-muted2)" }}>
-            Redownload clears this clip and sends you back to the link box (same as Change URL).
+            {t.redownloadHint}
           </p>
         )}
       </div>

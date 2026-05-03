@@ -4,6 +4,7 @@ import { JetBrains_Mono } from "next/font/google";
 import { AppHeader } from "@/components/AppHeader";
 import { SeoJsonLd } from "@/components/SeoJsonLd";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { LocaleSync } from "@/lib/i18n";
 import { DOWNLOAD_KEYWORDS, SITE_DESCRIPTION } from "@/lib/seo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import "./globals.css";
@@ -100,6 +101,7 @@ export default function RootLayout({
         <link href={GOOGLE_FONTS_CSS} rel="stylesheet" />
       </head>
       <body className="min-h-full overflow-x-hidden font-sans">
+        <LocaleSync />
         <SeoJsonLd />
         <ThemeProvider>
           <ToastProvider>
