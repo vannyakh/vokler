@@ -122,13 +122,8 @@ export type PreviewResponseDto = {
   bundle_items?: BundlePreviewItemDto[];
 };
 
-/** Matches API ``PreviewRequest.type``: bundle preview for playlist / channel tabs. */
 export type PreviewRequestType = "video" | "playlist" | "profile";
 
-/**
- * Preview metadata. Pass ``type`` ``playlist`` or ``profile`` so the API returns ``bundle_items``
- * (flat list + formats from the first video). Omit or ``video`` for a single URL.
- */
 export async function previewMedia(
   url: string,
   type?: PreviewRequestType | null,
@@ -337,6 +332,22 @@ export async function downloadJobFileToBrowser(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export type AuthUserDto = {
+  id: string;
+  email: string;
+  created_at: string;
+};
+
+export type TokenPairDto = {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+};
+
+export async function fetchCurrentUser(): Promise<AuthUserDto> {
+  return apiFetch<AuthUserDto>("/auth/me");
 }
 
 export async function apiFetch<T>(

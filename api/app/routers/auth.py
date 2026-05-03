@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.deps import get_current_user_id
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
@@ -74,3 +76,14 @@ async def refresh(body: RefreshRequest):
         timedelta(days=settings.refresh_token_expire_days),
     )
     return TokenPair(access_token=access, refresh_token=new_refresh)
+
+
+@router.get("/me", response_model=UserPublic)
+async def me(
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return UserPublic.model_validate(user)

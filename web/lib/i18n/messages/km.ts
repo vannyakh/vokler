@@ -1,57 +1,33 @@
 import type { Messages } from "./en";
-
 export const km: Messages = {
-  // AppHeader
   appTagline: "ទាញ​យក​វីដេអូ​ពី​បណ្ដាញ​សង្គម",
-
-  // Hero section
   heroLine1: "ទាញ​យក​ពី",
   heroHighlight: "គ្រប់​វេទិកា,",
   heroLine2: "គ្រប់​ទ្រង់ទ្រាយ, ភ្លាម​ៗ",
   heroSub: "YouTube · TikTok · Instagram · Twitter · Facebook · Vimeo · និង​ច្រើន​ទៀត",
-
-  // Platform badge
   morePlatforms: "+ ច្រើន​ទៀត",
-
-  // URL input area
   urlPlaceholder: "https://youtube.com/watch?v=…",
   pasteClipboard: "បិទ​ភ្ជាប់​ពី Clipboard",
   fetchInfo: "ទាញ​យក​ព័ត៌មាន​វីដេអូ",
   fetchingInfo: "កំពុង​ទាញ​យក​ព័ត៌មាន...",
-
-  // VideoInfoPanel — header
   preview: "មើល​ជា​មុន",
   changeUrl: "ប្ដូរ URL",
-
-  // Bundle / playlist
   playlist: "បញ្ជី​ចាក់",
   videoCount: (n: number) => `${n} វីដេអូ`,
   unknownChannel: "ឆានែល​មិន​ស្គាល់",
   untitled: "គ្មាន​ចំណងជើង",
-
-  // Format picker
   chooseFormat: "ជ្រើស​ទ្រង់ទ្រាយ",
   catVideoAudio: "វីដេអូ​មាន​សំឡេង",
   catAudio: "សំឡេង​ប៉ុណ្ណោះ",
   catVideoOnly: "វីដេអូ​ប៉ុណ្ណោះ (គ្មាន​សំឡេង)",
   best: "ល្អ​បំផុត",
-
-  // Download button states
   download: "ទាញ​យក",
   fetching: "…",
-
-  // Completed state
   completed: "បាន​បញ្ចប់",
   saveToDevice: "រក្សា​ទៅ​ឧបករណ៍",
   redownload: "ទាញ​យក​ម្ដង​ទៀត",
-
-  // Hint text below the footer bar
-  formatHint:
-    "ជ្រើស​ទ្រង់ទ្រាយ ហើយ​ទាញ​យក។ ជម្រើស​វីដេអូ​ប៉ុណ្ណោះ​គ្មាន​សំឡេង — ល្អ​សម្រាប់​ការ​កែ​សម្រួល។",
-  redownloadHint:
-    "ការ​ទាញ​យក​ម្ដង​ទៀត​នឹង​លុប clip នេះ ហើយ​ត្រឡប់​ទៅ​ប្រអប់​ URL ។",
-
-  // Toast / feedback messages
+  formatHint: "ជ្រើស​ទ្រង់ទ្រាយ ហើយ​ទាញ​យក។ ជម្រើស​វីដេអូ​ប៉ុណ្ណោះ​គ្មាន​សំឡេង — ល្អ​សម្រាប់​ការ​កែ​សម្រួល។",
+  redownloadHint: "ការ​ទាញ​យក​ម្ដង​ទៀត​នឹង​លុប clip នេះ ហើយ​ត្រឡប់​ទៅ​ប្រអប់​ URL ។",
   clipboardDenied: "Clipboard ត្រូវ​បាន​ច្រាន​ចោល ឬ​ទទេ",
   invalidUrl: "សូម​បញ្ចូល​តំណ http(s) ត្រឹម​ត្រូវ",
   videoReady: "វីដេអូ​រួច​រាល់ — ពិនិត្យ tab ថ្មី ឬ​ថត​ទាញ​យក",
@@ -59,4 +35,20 @@ export const km: Messages = {
   downloadFailed: "ការ​ទាញ​យក​បាន​បរាជ័យ",
   archiveFailed: "Archive បាន​បរាជ័យ",
   couldNotLoad: "មិន​អាច​ផ្ទុក​ព័ត៌មាន​វីដេអូ​បាន​ទេ",
+  // auth
+  signIn: "ចូល​គណនី",
+  signUp: "បង្កើត​គណនី",
+  signOut: "ចេញ",
+  email: "អ៊ីមែល",
+  password: "ពាក្យ​សម្ងាត់",
+  confirmPassword: "បញ្ជាក់​ពាក្យ​សម្ងាត់",
+  noAccount: "មិន​ទាន់​មាន​គណនី?",
+  haveAccount: "មាន​គណនី​រួច​ហើយ?",
+  signingIn: "កំពុង​ចូល…",
+  signingUp: "កំពុង​បង្កើត​គណនី…",
+  profileTitle: "គណនី​របស់​អ្នក",
+  memberSince: "សមាជិក​ចាប់​ពី",
+  passwordMismatch: "ពាក្យ​សម្ងាត់​មិន​ត្រូវ​គ្នា",
+  invalidCredentials: "អ៊ីមែល ឬ​ពាក្យ​សម្ងាត់​មិន​ត្រឹម​ត្រូវ",
+  authError: "មាន​បញ្ហា​កើត​ឡើង។ សូម​ព្យាយាម​ម្ដង​ទៀត។",
 };

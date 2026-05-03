@@ -1,55 +1,32 @@
 export const en = {
-  // AppHeader
   appTagline: "social video downloader",
-
-  // Hero section
   heroLine1: "Download from",
   heroHighlight: "any platform,",
   heroLine2: "any format, instantly",
   heroSub: "YouTube · TikTok · Instagram · Twitter · Facebook · Vimeo · and more",
-
-  // Platform badge
   morePlatforms: "+ more",
-
-  // URL input area
   urlPlaceholder: "https://youtube.com/watch?v=…",
   pasteClipboard: "Paste from clipboard",
   fetchInfo: "Fetch video info",
   fetchingInfo: "Fetching video info",
-
-  // VideoInfoPanel — header
   preview: "Preview",
   changeUrl: "Change URL",
-
-  // Bundle / playlist
   playlist: "Playlist",
   videoCount: (n: number) => `${n} video${n !== 1 ? "s" : ""}`,
   unknownChannel: "Unknown channel",
   untitled: "Untitled",
-
-  // Format picker
   chooseFormat: "Choose format",
   catVideoAudio: "Video with sound",
   catAudio: "Audio only",
   catVideoOnly: "Video only (no sound)",
   best: "Best",
-
-  // Download button states
   download: "Download",
   fetching: "…",
-
-  // Completed state
   completed: "Completed",
   saveToDevice: "Save to device",
   redownload: "Redownload video",
-
-  // Hint text below the footer bar
-  formatHint:
-    "Choose a format, then download. Video-only options have no audio — useful for editing.",
-  redownloadHint:
-    "Redownload clears this clip and sends you back to the link box (same as Change URL).",
-
-  // Toast / feedback messages
+  formatHint: "Choose a format, then download. Video-only options have no audio — useful for editing.",
+  redownloadHint: "Redownload clears this clip and sends you back to the link box (same as Change URL).",
   clipboardDenied: "Clipboard access denied or empty",
   invalidUrl: "Enter a valid http(s) link",
   videoReady: "Video ready — check the new tab or your downloads folder",
@@ -57,10 +34,22 @@ export const en = {
   downloadFailed: "Download failed",
   archiveFailed: "Archive failed",
   couldNotLoad: "Could not load video info",
+  // auth
+  signIn: "Sign in",
+  signUp: "Sign up",
+  signOut: "Sign out",
+  email: "Email",
+  password: "Password",
+  confirmPassword: "Confirm password",
+  noAccount: "Don't have an account?",
+  haveAccount: "Already have an account?",
+  signingIn: "Signing in…",
+  signingUp: "Creating account…",
+  profileTitle: "Your account",
+  memberSince: "Member since",
+  passwordMismatch: "Passwords do not match",
+  invalidCredentials: "Invalid email or password",
+  authError: "Something went wrong. Please try again.",
 };
 
-/**
- * English is the source of keys; values are plain `string` / functions so locale
- * files (e.g. Khmer) are assignable without matching English literals exactly.
- */
 export type Messages = typeof en;

@@ -1,19 +1,15 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Kantumruy_Pro } from "next/font/google";
 
-import { AppHeader } from "@/components/AppHeader";
-import { SeoJsonLd } from "@/components/SeoJsonLd";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { LocaleSync } from "@/lib/i18n";
 import { DOWNLOAD_KEYWORDS, SITE_DESCRIPTION } from "@/lib/seo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import "./globals.css";
-import { ToastProvider } from "@/components/ui/toast/Toast";
 
 const GOOGLE_FONTS_CSS =
   "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap";
 
-/** JetBrains Mono — monospace (Google Fonts: 400, 500). */
 const fontMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
@@ -21,7 +17,6 @@ const fontMono = JetBrains_Mono({
   display: "swap",
 });
 
-/** Kantumruy Pro — Khmer script (Google Fonts: 400–700). */
 const fontKhmer = Kantumruy_Pro({
   variable: "--font-kantumruy-pro",
   subsets: ["khmer"],
@@ -68,9 +63,7 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     images: ["/vokler-banner.png"],
   },
-  alternates: {
-    canonical: "/",
-  },
+  alternates: { canonical: "/" },
   robots: {
     index: true,
     follow: true,
@@ -94,9 +87,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
@@ -110,13 +101,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full overflow-x-hidden font-sans">
         <LocaleSync />
-        <SeoJsonLd />
-        <ThemeProvider>
-          <ToastProvider>
-            <AppHeader />
-            {children}
-          </ToastProvider>
-        </ThemeProvider>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
