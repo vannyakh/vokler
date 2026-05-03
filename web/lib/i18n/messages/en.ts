@@ -50,6 +50,14 @@ export const en = {
   passwordMismatch: "Passwords do not match",
   invalidCredentials: "Invalid email or password",
   authError: "Something went wrong. Please try again.",
+  continueWithGoogle: "Continue with Google",
+  continueWithGitHub: "Continue with GitHub",
+  orContinueWithEmail: "or continue with email",
+  checkEmailVerifyInbox:
+    "Check your inbox — we sent a verification link. Open it to finish signing up, then sign in here.",
+  emailNotVerified: "This email is not verified yet. Check your inbox or resend the link below.",
+  resendVerification: "Resend verification email",
+  verificationSent: "Verification email sent.",
 };
 
 export type Messages = typeof en;

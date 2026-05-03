@@ -5,12 +5,13 @@ import Link from "next/link";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { authClient } from "@/lib/auth-client";
 import { useT } from "@/lib/i18n";
-import { useAuthStore } from "@/stores/authStore";
 
 function AuthButton() {
   const t = useT();
-  const user = useAuthStore((s) => s.user);
+  const { data: session } = authClient.useSession();
+  const user = session?.user;
 
   if (user) {
     const initial = user.email[0]?.toUpperCase() ?? "?";

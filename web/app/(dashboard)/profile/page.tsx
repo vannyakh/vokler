@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+import { authClient } from "@/lib/auth-client";
 import { useAuthStore } from "@/stores/authStore";
 import { useT } from "@/lib/i18n";
 
@@ -22,31 +22,18 @@ function UserAvatar({ email }: { email: string }) {
 export default function ProfilePage() {
   const t = useT();
   const router = useRouter();
-
-  const user = useAuthStore((s) => s.user);
-  const logout = useAuthStore((s) => s.logout);
-  const refreshUser = useAuthStore((s) => s.refreshUser);
-  const tryRefreshToken = useAuthStore((s) => s.tryRefreshToken);
-
-  useEffect(() => {
-    async function init() {
-      try {
-        await refreshUser();
-      } catch {
-        const ok = await tryRefreshToken();
-        if (ok) await refreshUser();
-      }
-    }
-    void init();
-  }, [refreshUser, tryRefreshToken]);
+  const { data: session, isPending } = authClient.useSession();
+  const user = session?.user;
+  const fastapiLogout = useAuthStore((s) => s.logout);
 
   async function handleLogout() {
-    await logout();
+    await authClient.signOut();
+    await fastapiLogout();
     router.replace("/");
   }
 
-  const joined = user?.created_at
-    ? new Date(user.created_at).toLocaleDateString("en-US", {
+  const joined = user?.createdAt
+    ? new Date(user.createdAt).toLocaleDateString("en-US", {
         year: "numeric",
         month: "long",
         day: "numeric",
@@ -72,7 +59,7 @@ export default function ProfilePage() {
                 <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--vok-muted)" }}>
                   {t.email}
                 </p>
-                <p className="text-[14px] font-medium break-all" style={{ color: "var(--vok-text)" }}>
+                <p className="break-all text-[14px] font-medium" style={{ color: "var(--vok-text)" }}>
                   {user.email}
                 </p>
               </div>
@@ -91,6 +78,7 @@ export default function ProfilePage() {
           </div>
 
           <button
+            type="button"
             onClick={() => void handleLogout()}
             className="w-full rounded-(--vok-radius) py-3 text-[14px] font-medium transition hover:opacity-80"
             style={{
@@ -104,12 +92,9 @@ export default function ProfilePage() {
         </>
       ) : (
         <div className="flex flex-col items-center gap-4 pt-8">
-          <div
-            className="h-16 w-16 rounded-full"
-            style={{ background: "var(--vok-surface2)" }}
-          />
+          <div className="h-16 w-16 rounded-full" style={{ background: "var(--vok-surface2)" }} />
           <p className="text-[13px]" style={{ color: "var(--vok-muted)" }}>
-            {t.signingIn}
+            {isPending ? t.signingIn : t.signIn}
           </p>
         </div>
       )}
