@@ -62,21 +62,31 @@ def _humanize_ytdlp_error(exc: BaseException) -> str:
             return friendly
     return raw
 
-# YouTube DASH: best 1080p is often VP9/WebM video + m4a/opus audio — do not require ext=mp4 on
-# bestvideo first or yt-dlp falls back to a single low progressive file (~360p).
-# bestvideo+bestaudio merges with FFmpeg; merge_output_format=mp4 when muxing to MP4.
+# YouTube DASH: use ``bv*+ba`` / ``bv+ba`` (yt-dlp shorthands) so ``bestvideo``/``bestaudio``
+# resolve to the highest matching DASH pair. Require ``[ext=mp4]`` on video first and you often
+# lose VP9/AV1 1080p+ and fall back to a low progressive ``best``.
+# ``extractor_args`` (android/web/ios) merges format lists from multiple InnerTube clients.
 FORMAT_MAP: dict[str, str] = {
-    # Height caps apply to the video stream only; audio is always merged for sync playback.
-    "mp4_2160p": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
-    "mp4_1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
-    "mp4_1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-    "mp4_720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-    "mp4_480p": "bestvideo[height<=480]+bestaudio/best",
+    "mp4_2160p": "bv*[height<=2160]+ba/bv[height<=2160]+ba/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
+    "mp4_1440p": "bv*[height<=1440]+ba/bv[height<=1440]+ba/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
+    "mp4_1080p": "bv*[height<=1080]+ba/bv[height<=1080]+ba/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+    "mp4_720p": "bv*[height<=720]+ba/bv[height<=720]+ba/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+    "mp4_480p": "bv*[height<=480]+ba/bv[height<=480]+ba/bestvideo[height<=480]+bestaudio/best",
     "mp3_320": "bestaudio/best",
     "mp3_192": "bestaudio/best",
-    # No height cap — merges best separate video + audio (often 4K VP9 + m4a on YouTube).
-    "original": "bestvideo+bestaudio/bestvideo+ba/best",
+    "original": "bv*+ba/bv+ba/bestvideo*+bestaudio/bestvideo+bestaudio/best",
 }
+
+
+def ydl_base_opts() -> dict[str, Any]:
+    """Options merged into every YoutubeDL session (preview, flat extract, download)."""
+    return {
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web", "ios"],
+            },
+        },
+    }
 
 POSTPROCESSORS: dict[str, list[dict[str, Any]]] = {
     "mp3_320": [
@@ -180,7 +190,7 @@ def _pick_recommended_muxed_format_id(rows: list[dict[str, Any]]) -> str | None:
     return str(fid) if fid is not None else None
 
 
-def _build_format_rows(info: dict[str, Any], limit: int = 48) -> list[dict[str, Any]]:
+def _build_format_rows(info: dict[str, Any], limit: int = 64) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for f in info.get("formats") or []:
@@ -211,6 +221,7 @@ def _build_format_rows(info: dict[str, Any], limit: int = 48) -> list[dict[str, 
 
 def extract_preview_sync(url: str) -> dict[str, Any]:
     opts: dict[str, Any] = {
+        **ydl_base_opts(),
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -340,6 +351,7 @@ def extract_flat_urls_sync(url: str, max_entries: int = 100) -> tuple[list[str],
     """
     url = _normalize_for_flat_extract(url)
     opts: dict[str, Any] = {
+        **ydl_base_opts(),
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -424,6 +436,7 @@ def extract_flat_entries_sync(url: str, max_entries: int = 100) -> tuple[list[di
     """
     url = _normalize_for_flat_extract(url)
     opts: dict[str, Any] = {
+        **ydl_base_opts(),
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
@@ -548,6 +561,7 @@ class YtDlpDownloader:
         out_tmpl = str(tmp_dir / "%(title)s.%(ext)s")
         spec, postprocessors, merge_mp4 = self._format_merge_and_postprocessors()
         ydl_opts: dict[str, Any] = {
+            **ydl_base_opts(),
             "format": spec,
             "outtmpl": out_tmpl,
             "quiet": True,
@@ -559,9 +573,6 @@ class YtDlpDownloader:
         }
         if merge_mp4:
             ydl_opts["merge_output_format"] = "mp4"
-        # Prefer highest resolution / quality when several DASH streams match (e.g. 2160 vs 1080).
-        if merge_mp4 or "+" in spec:
-            ydl_opts["format_sort"] = ["res", "codec", "quality", "br"]
         if self.progress_hook is not None:
             ydl_opts["progress_hooks"] = [self.progress_hook]
 
