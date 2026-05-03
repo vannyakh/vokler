@@ -16,7 +16,7 @@ type TokenPair = {
   refresh_token: string;
 };
 
-type AuthState = {
+export type AuthState = {
   user: AuthUser | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -24,6 +24,8 @@ type AuthState = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   tryRefreshToken: () => Promise<boolean>;
+  /** After Better Auth OAuth; calls Next `/api/auth/sync-api` then stores FastAPI JWTs. */
+  bootstrapApiSessionFromOAuth: () => Promise<void>;
 };
 
 async function setAuthCookie(token: string): Promise<void> {
@@ -119,6 +121,31 @@ export const useAuthStore = create<AuthState>()(
           set({ user: null });
           return false;
         }
+      },
+
+      bootstrapApiSessionFromOAuth: async () => {
+        const origin = window.location.origin;
+        const res = await fetch(`${origin}/api/auth/sync-api`, {
+          method: "POST",
+          credentials: "include",
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          let detail = text;
+          try {
+            const j = JSON.parse(text) as { detail?: unknown };
+            if (typeof j.detail === "string") detail = j.detail;
+          } catch {
+            /* use raw */
+          }
+          throw new Error(detail || "OAuth API sync failed");
+        }
+        const pair = JSON.parse(text) as TokenPair;
+        if (!pair.access_token || !pair.refresh_token) {
+          throw new Error("Invalid token response from API");
+        }
+        storeTokens(pair);
+        await setAuthCookie(pair.access_token);
       },
     }),
     {

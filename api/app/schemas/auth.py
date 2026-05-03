@@ -14,6 +14,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class OAuthSyncRequest(BaseModel):
+    """Trusted server-to-server: Next.js verifies Better Auth session, then syncs this email."""
+
+    email: EmailStr
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str

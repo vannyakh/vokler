@@ -7,6 +7,7 @@ import { Suspense, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { authGithubButtonEnabled, authGoogleButtonEnabled } from "@/lib/auth-ui-flags";
 import { useT } from "@/lib/i18n";
+import { buildOAuthCallbackURL } from "@/lib/oauth-callback-url";
 
 function oauthButtonClass() {
   return "flex w-full items-center justify-center gap-2 rounded-(--vok-radius) border py-3 text-[14px] font-medium transition hover:opacity-90 disabled:opacity-50";
@@ -65,7 +66,7 @@ function SignUpForm() {
     try {
       await authClient.signIn.social({
         provider,
-        callbackURL: `${window.location.origin}${next.startsWith("/") ? next : "/home"}`,
+        callbackURL: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);

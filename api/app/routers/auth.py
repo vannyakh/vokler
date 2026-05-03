@@ -1,8 +1,9 @@
+import secrets
 from datetime import timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -11,6 +12,7 @@ from app.deps import get_current_user_id
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
+    OAuthSyncRequest,
     RefreshRequest,
     RegisterRequest,
     TokenPair,
@@ -76,6 +78,45 @@ async def refresh(body: RefreshRequest):
         timedelta(days=settings.refresh_token_expire_days),
     )
     return TokenPair(access_token=access, refresh_token=new_refresh)
+
+
+@router.post("/oauth-sync", response_model=TokenPair)
+async def oauth_sync(
+    body: OAuthSyncRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Provision FastAPI `users` row after Better Auth OAuth; called only from Next.js (shared secret)."""
+    supplied = (request.headers.get("x-oauth-sync-secret") or "").strip()
+    if not settings.oauth_sync_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OAuth sync is not configured",
+        )
+    if not supplied or not secrets.compare_digest(supplied, settings.oauth_sync_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid oauth sync secret",
+        )
+    email_norm = str(body.email).strip().lower()
+    user = await db.scalar(select(User).where(func.lower(User.email) == email_norm))
+    if user is None:
+        user = User(
+            email=str(body.email).strip(),
+            password_hash=hash_password(secrets.token_urlsafe(48)),
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    access = create_access_token(
+        user.id,
+        timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    refresh = create_refresh_token(
+        user.id,
+        timedelta(days=settings.refresh_token_expire_days),
+    )
+    return TokenPair(access_token=access, refresh_token=refresh)
 
 
 @router.get("/me", response_model=UserPublic)

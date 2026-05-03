@@ -37,6 +37,12 @@ class Settings(BaseSettings):
         description="If non-empty, browsers and other clients must send header X-App-Key with this value "
         "(WebSocket may use query app_key=… or the same header). GET /health and OPTIONS are exempt.",
     )
+    oauth_sync_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("OAUTH_SYNC_SECRET"),
+        description="Shared secret for POST /auth/oauth-sync (X-OAuth-Sync-Secret). "
+        "Set the same value on the Next.js server (OAUTH_SYNC_SECRET). Empty disables the endpoint.",
+    )
     # Stored as a plain str so pydantic-settings never tries json.loads() on it.
     # Use the cors_origins computed property everywhere instead.
     cors_origins_raw: str = Field(
@@ -101,9 +107,9 @@ class Settings(BaseSettings):
             return "postgresql+asyncpg://" + s.removeprefix("postgres://")
         return s
 
-    @field_validator("frontend_app_key", mode="after")
+    @field_validator("frontend_app_key", "oauth_sync_secret", mode="after")
     @classmethod
-    def strip_frontend_app_key(cls, v: str) -> str:
+    def strip_sensitive_strings(cls, v: str) -> str:
         return (v or "").strip()
 
     storage_backend: str = Field(

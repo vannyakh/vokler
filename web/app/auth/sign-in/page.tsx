@@ -7,6 +7,7 @@ import { Suspense, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { authGithubButtonEnabled, authGoogleButtonEnabled } from "@/lib/auth-ui-flags";
 import { useT } from "@/lib/i18n";
+import { buildOAuthCallbackURL } from "@/lib/oauth-callback-url";
 
 async function postSendVerificationEmail(email: string): Promise<void> {
   const origin = window.location.origin;
@@ -94,7 +95,7 @@ function SignInForm() {
     try {
       await authClient.signIn.social({
         provider,
-        callbackURL: next.startsWith("/") ? `${window.location.origin}${next}` : next,
+        callbackURL: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);
