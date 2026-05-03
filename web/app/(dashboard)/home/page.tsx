@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 
-import { authClient } from "@/lib/auth-client";
+import { useSession } from "next-auth/react";
 import { useT } from "@/lib/i18n";
 
 export default function DashboardHomePage() {
   const t = useT();
-  const { data: session } = authClient.useSession();
+  const { data: session } = useSession();
   const user = session?.user;
   const displayName = user?.name?.trim() || user?.email?.split("@")[0] || "";
 

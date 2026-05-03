@@ -24,7 +24,7 @@ export type AuthState = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   tryRefreshToken: () => Promise<boolean>;
-  /** After Better Auth OAuth; calls Next `/api/auth/sync-api` then stores FastAPI JWTs. */
+  /** After OAuth; calls `POST /api/session` then stores FastAPI JWTs. */
   bootstrapApiSessionFromOAuth: () => Promise<void>;
 };
 
@@ -125,12 +125,17 @@ export const useAuthStore = create<AuthState>()(
 
       bootstrapApiSessionFromOAuth: async () => {
         const origin = window.location.origin;
-        const res = await fetch(`${origin}/api/auth/sync-api`, {
-          method: "POST",
-          credentials: "include",
-        });
-        const text = await res.text();
-        if (!res.ok) {
+        const url = `${origin}/api/session`;
+        let text = "";
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          res = await fetch(url, { method: "POST", credentials: "include" });
+          text = await res.text();
+          if (res.ok) break;
+          if (res.status === 401 && attempt < 4) {
+            await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+            continue;
+          }
           let detail = text;
           try {
             const j = JSON.parse(text) as { detail?: unknown };
@@ -139,6 +144,9 @@ export const useAuthStore = create<AuthState>()(
             /* use raw */
           }
           throw new Error(detail || "OAuth API sync failed");
+        }
+        if (!res?.ok) {
+          throw new Error("OAuth API sync failed");
         }
         const pair = JSON.parse(text) as TokenPair;
         if (!pair.access_token || !pair.refresh_token) {

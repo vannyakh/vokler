@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Kantumruy_Pro } from "next/font/google";
 
+import { AuthProvider } from "@/components/AuthProvider";
 import { SeoJsonLd } from "@/components/SeoJsonLd";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { LocaleSync } from "@/lib/i18n";
@@ -103,7 +104,9 @@ export default function RootLayout({
       <body className="min-h-full overflow-x-hidden font-sans">
         <LocaleSync />
         <SeoJsonLd />
-        <ThemeProvider>{children}</ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

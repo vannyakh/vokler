@@ -5,16 +5,16 @@ import { useRouter } from "next/navigation";
 
 import { AppHeader } from "@/components/AppHeader";
 import { ToastProvider } from "@/components/ui/toast/Toast";
-import { authClient } from "@/lib/auth-client";
+import { useSession } from "next-auth/react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (isPending) return;
+    if (status === "loading") return;
     if (!session?.user) router.replace("/auth/sign-in");
-  }, [isPending, session?.user, router]);
+  }, [status, session?.user, router]);
 
   return (
     <ToastProvider>

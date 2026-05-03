@@ -5,22 +5,22 @@ import Link from "next/link";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { authClient } from "@/lib/auth-client";
+import { useSession } from "next-auth/react";
 import { useT } from "@/lib/i18n";
 
 function AuthButton() {
   const t = useT();
-  const { data: session } = authClient.useSession();
+  const { data: session } = useSession();
   const user = session?.user;
 
   if (user) {
-    const initial = user.email[0]?.toUpperCase() ?? "?";
+    const initial = user.email?.[0]?.toUpperCase() ?? "?";
     return (
       <Link
         href="/profile"
         className="flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-bold text-white transition hover:opacity-85"
         style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
-        title={user.email}
+        title={user.email ?? undefined}
         aria-label="Profile"
       >
         {initial}

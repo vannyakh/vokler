@@ -1,77 +1,79 @@
-import { betterAuth } from "better-auth";
-import { nextCookies } from "better-auth/next-js";
+import NextAuth from "next-auth";
+import type { NextAuthConfig } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import GitHub from "next-auth/providers/github";
+import Google from "next-auth/providers/google";
 
-import { canSendTransactionalEmail, sendVerificationEmailMessage } from "@/lib/email";
+import { authServerValidateCredentials } from "@/lib/auth-server";
 
-function databaseUrl(): string {
-  const raw = process.env.DATABASE_URL?.trim();
-  if (!raw) {
-    throw new Error(
-      "DATABASE_URL is required for Better Auth (same Postgres as the API; use postgresql://… not +asyncpg).",
-    );
-  }
-  return raw
-    .replace(/^postgresql\+asyncpg:\/\//i, "postgresql://")
-    .replace(/^postgres:\/\//i, "postgresql://");
+/** Prefer AUTH_SECRET in production; BETTER_AUTH_* kept for migration from the old stack. */
+function authSecret(): string {
+  return (
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    process.env.BETTER_AUTH_SECRET?.trim() ||
+    "development-only-set-AUTH_SECRET-min-32-chars-in-production"
+  );
 }
 
-function baseUrl(): string {
-  return (process.env.BETTER_AUTH_URL ?? "http://localhost:3000").replace(/\/$/, "");
-}
-
-function trustedOrigins(): string[] {
-  const extra = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return Array.from(new Set([baseUrl(), "http://localhost:3000", "http://127.0.0.1:3000", ...extra]));
-}
-
-function buildSocialProviders() {
+function buildProviders() {
+  const list: NextAuthConfig["providers"] = [];
   const googleId = process.env.GOOGLE_CLIENT_ID?.trim();
   const googleSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+  if (googleId && googleSecret) {
+    list.push(Google({ clientId: googleId, clientSecret: googleSecret }));
+  }
   const githubId = process.env.GITHUB_CLIENT_ID?.trim();
   const githubSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
-
-  const social: Record<string, { clientId: string; clientSecret: string }> = {};
-  if (googleId && googleSecret) {
-    social.google = { clientId: googleId, clientSecret: googleSecret };
-  }
   if (githubId && githubSecret) {
-    social.github = { clientId: githubId, clientSecret: githubSecret };
+    list.push(GitHub({ clientId: githubId, clientSecret: githubSecret }));
   }
-  return social;
+  list.push(
+    Credentials({
+      id: "credentials",
+      name: "Email",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      authorize: async (credentials) => {
+        const email = typeof credentials?.email === "string" ? credentials.email.trim() : "";
+        const password = typeof credentials?.password === "string" ? credentials.password : "";
+        if (!email || !password) return null;
+        const user = await authServerValidateCredentials(email, password);
+        if (!user) return null;
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.email.split("@")[0] || "User",
+        };
+      },
+    }),
+  );
+  return list;
 }
 
-const requireVerify = canSendTransactionalEmail();
-const social = buildSocialProviders();
-
-const emailVerification = requireVerify
-  ? {
-      sendOnSignUp: true as const,
-      autoSignInAfterVerification: true as const,
-      sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
-        void sendVerificationEmailMessage(user.email, url).catch((err) => {
-          console.error("[auth] sendVerificationEmail:", err);
-        });
-      },
-    }
-  : undefined;
-
-export const auth = betterAuth({
-  secret: process.env.BETTER_AUTH_SECRET!,
-  baseURL: baseUrl(),
-  trustedOrigins: trustedOrigins(),
-  database: {
-    provider: "pg",
-    url: databaseUrl(),
+export const authConfig = {
+  trustHost: true,
+  secret: authSecret(),
+  providers: buildProviders(),
+  session: { strategy: "jwt" },
+  callbacks: {
+    jwt({ token, user }) {
+      if (user) {
+        token.sub = user.id ?? user.email ?? token.sub;
+        if (user.email) token.email = user.email;
+      }
+      return token;
+    },
+    session({ session, token }) {
+      if (session.user) {
+        session.user.id = (token.sub as string) ?? "";
+        if (token.email) session.user.email = token.email as string;
+      }
+      return session;
+    },
   },
-  emailAndPassword: {
-    enabled: true,
-    requireEmailVerification: requireVerify,
-    minPasswordLength: 8,
-  },
-  ...(emailVerification ? { emailVerification } : {}),
-  ...(Object.keys(social).length > 0 ? { socialProviders: social } : {}),
-  plugins: [nextCookies()],
-});
+} satisfies NextAuthConfig;
+
+export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

@@ -1,8 +1,8 @@
 "use client";
 
+import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
-import { authClient } from "@/lib/auth-client";
 import { useAuthStore } from "@/stores/authStore";
 import { useT } from "@/lib/i18n";
 
@@ -22,23 +22,15 @@ function UserAvatar({ email }: { email: string }) {
 export default function ProfilePage() {
   const t = useT();
   const router = useRouter();
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session, status } = useSession();
   const user = session?.user;
   const fastapiLogout = useAuthStore((s) => s.logout);
 
   async function handleLogout() {
-    await authClient.signOut();
     await fastapiLogout();
+    await signOut({ redirect: false });
     router.replace("/");
   }
-
-  const joined = user?.createdAt
-    ? new Date(user.createdAt).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : null;
 
   return (
     <div className="mx-auto max-w-[420px] px-5 pb-16 pt-4">
@@ -46,7 +38,7 @@ export default function ProfilePage() {
         {t.profileTitle}
       </h1>
 
-      {user ? (
+      {user?.email ? (
         <>
           <div
             className="mb-4 rounded-(--vok-radius) border p-6"
@@ -63,17 +55,6 @@ export default function ProfilePage() {
                   {user.email}
                 </p>
               </div>
-
-              {joined && (
-                <div>
-                  <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--vok-muted)" }}>
-                    {t.memberSince}
-                  </p>
-                  <p className="text-[14px]" style={{ color: "var(--vok-text)" }}>
-                    {joined}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
 
@@ -94,7 +75,7 @@ export default function ProfilePage() {
         <div className="flex flex-col items-center gap-4 pt-8">
           <div className="h-16 w-16 rounded-full" style={{ background: "var(--vok-surface2)" }} />
           <p className="text-[13px]" style={{ color: "var(--vok-muted)" }}>
-            {isPending ? t.signingIn : t.signIn}
+            {status === "loading" ? t.signingIn : t.signIn}
           </p>
         </div>
       )}

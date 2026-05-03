@@ -2,29 +2,13 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { signIn } from "next-auth/react";
 import { Suspense, useState } from "react";
 
-import { authClient } from "@/lib/auth-client";
 import { authGithubButtonEnabled, authGoogleButtonEnabled } from "@/lib/auth-ui-flags";
-import { useT } from "@/lib/i18n";
 import { buildOAuthCallbackURL } from "@/lib/oauth-callback-url";
-
-async function postSendVerificationEmail(email: string): Promise<void> {
-  const origin = window.location.origin;
-  const res = await fetch(`${origin}/api/auth/send-verification-email`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email,
-      callbackURL: `${origin}/auth/sign-in`,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Failed to send verification email");
-  }
-}
+import { type AuthState, useAuthStore } from "@/stores/authStore";
+import { useT } from "@/lib/i18n";
 
 function oauthButtonClass() {
   return "flex w-full items-center justify-center gap-2 rounded-(--vok-radius) border py-3 text-[14px] font-medium transition hover:opacity-90 disabled:opacity-50";
@@ -35,39 +19,31 @@ function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/home";
+  const login = useAuthStore((s: AuthState) => s.login);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [showResend, setShowResend] = useState(false);
-  const [resendBusy, setResendBusy] = useState(false);
-  const [resendOk, setResendOk] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setShowResend(false);
-    setResendOk(false);
     setIsLoading(true);
     try {
-      const { error: err } = await authClient.signIn.email({
+      const res = await signIn("credentials", {
         email,
         password,
-        callbackURL: next.startsWith("/") ? `${window.location.origin}${next}` : next,
+        redirect: false,
+        callbackUrl: next.startsWith("/") ? `${window.location.origin}${next}` : next,
       });
-      if (err) {
-        const msg = err.message ?? "";
-        if (/verify|verified|EMAIL_NOT_VERIFIED/i.test(msg) || err.status === 403) {
-          setShowResend(true);
-          setError(t.emailNotVerified);
-        } else {
-          setError(msg || t.invalidCredentials);
-        }
+      if (res?.error) {
+        setError(t.invalidCredentials);
         return;
       }
+      await login(email, password);
       router.refresh();
-      router.replace(next);
+      router.replace(next.startsWith("/") ? next : "/home");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);
     } finally {
@@ -75,27 +51,12 @@ function SignInForm() {
     }
   }
 
-  async function handleResend() {
-    setResendBusy(true);
-    setResendOk(false);
-    setError(null);
-    try {
-      await postSendVerificationEmail(email);
-      setResendOk(true);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t.authError);
-    } finally {
-      setResendBusy(false);
-    }
-  }
-
   async function startSocial(provider: "google" | "github") {
     setError(null);
     setIsLoading(true);
     try {
-      await authClient.signIn.social({
-        provider,
-        callbackURL: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
+      await signIn(provider, {
+        callbackUrl: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);
@@ -180,18 +141,6 @@ function SignInForm() {
             {error}
           </p>
         )}
-        {resendOk && (
-          <p
-            className="rounded-(--vok-radius) border px-4 py-2.5 text-sm"
-            style={{
-              background: "color-mix(in srgb, #22c55e 10%, var(--vok-surface2))",
-              borderColor: "color-mix(in srgb, #22c55e 30%, transparent)",
-              color: "#22c55e",
-            }}
-          >
-            {t.verificationSent}
-          </p>
-        )}
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="email" className="text-[13px] font-medium" style={{ color: "var(--vok-text)" }}>
@@ -246,22 +195,6 @@ function SignInForm() {
             }}
           />
         </div>
-
-        {showResend ? (
-          <button
-            type="button"
-            disabled={resendBusy || !email.trim()}
-            onClick={() => void handleResend()}
-            className="rounded-(--vok-radius) border py-2.5 text-[13px] font-medium transition hover:opacity-90 disabled:opacity-50"
-            style={{
-              background: "var(--vok-surface2)",
-              borderColor: "var(--vok-border)",
-              color: "var(--vok-accent)",
-            }}
-          >
-            {resendBusy ? t.fetching : t.resendVerification}
-          </button>
-        ) : null}
 
         <button
           type="submit"

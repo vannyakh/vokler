@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { signIn } from "next-auth/react";
 import { Suspense, useState } from "react";
 
-import { authClient } from "@/lib/auth-client";
 import { authGithubButtonEnabled, authGoogleButtonEnabled } from "@/lib/auth-ui-flags";
-import { useT } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
 import { buildOAuthCallbackURL } from "@/lib/oauth-callback-url";
+import { type AuthState, useAuthStore } from "@/stores/authStore";
+import { useT } from "@/lib/i18n";
 
 function oauthButtonClass() {
   return "flex w-full items-center justify-center gap-2 rounded-(--vok-radius) border py-3 text-[14px] font-medium transition hover:opacity-90 disabled:opacity-50";
@@ -18,13 +20,13 @@ function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/home";
+  const login = useAuthStore((s: AuthState) => s.login);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [checkEmail, setCheckEmail] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,24 +37,23 @@ function SignUpForm() {
     }
     setIsLoading(true);
     try {
-      const name = email.split("@")[0]?.trim() || "User";
-      const { error: err } = await authClient.signUp.email({
+      await apiFetch("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      const res = await signIn("credentials", {
         email,
         password,
-        name,
-        callbackURL: `${window.location.origin}${next.startsWith("/") ? next : "/home"}`,
+        redirect: false,
+        callbackUrl: `${window.location.origin}${next.startsWith("/") ? next : "/home"}`,
       });
-      if (err) {
-        setError(err.message ?? t.authError);
+      if (res?.error) {
+        setError(t.authError);
         return;
       }
-      const sess = await authClient.getSession();
-      if (sess.data?.user) {
-        router.refresh();
-        router.replace(next);
-        return;
-      }
-      setCheckEmail(true);
+      await login(email, password);
+      router.refresh();
+      router.replace(next.startsWith("/") ? next : "/home");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);
     } finally {
@@ -64,9 +65,8 @@ function SignUpForm() {
     setError(null);
     setIsLoading(true);
     try {
-      await authClient.signIn.social({
-        provider,
-        callbackURL: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
+      await signIn(provider, {
+        callbackUrl: buildOAuthCallbackURL(next.startsWith("/") ? next : "/home"),
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t.authError);
@@ -89,23 +89,6 @@ function SignUpForm() {
 
   const showGoogle = authGoogleButtonEnabled();
   const showGithub = authGithubButtonEnabled();
-
-  if (checkEmail) {
-    return (
-      <div className="flex flex-col gap-4 text-center">
-        <p className="text-[14px] leading-relaxed" style={{ color: "var(--vok-text)" }}>
-          {t.checkEmailVerifyInbox}
-        </p>
-        <Link
-          href="/auth/sign-in"
-          className="rounded-(--vok-radius) py-3 text-[14px] font-semibold text-white transition hover:opacity-90"
-          style={{ background: "linear-gradient(135deg, var(--vok-accent), #8b5cf6)" }}
-        >
-          {t.signIn}
-        </Link>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-6">

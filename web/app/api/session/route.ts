@@ -3,11 +3,21 @@ import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { serverFrontendAppKey, serverUpstreamApiBase } from "@/lib/server-api-base";
 
+export const dynamic = "force-dynamic";
+
+/** Sanity check in the browser: if this 404s, the dev server is not this app or needs a restart. */
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    message: "POST here with an active NextAuth session cookie to sync API JWTs.",
+  });
+}
+
 /**
- * After Better Auth OAuth, provisions the FastAPI `users` row (if needed) and returns JWTs.
- * Requires OAUTH_SYNC_SECRET on web and api (same value). Not exposed to the browser.
+ * Provisions FastAPI JWTs after OAuth (NextAuth session email → `/auth/oauth-sync`).
+ * Uses `/api/session` (not under `/api/auth/*`) so it never conflicts with Auth.js routes.
  */
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   const syncSecret = process.env.OAUTH_SYNC_SECRET?.trim();
   if (!syncSecret) {
     return NextResponse.json(
@@ -16,7 +26,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
+  const session = await auth();
   const email = session?.user?.email?.trim();
   if (!email) {
     return NextResponse.json({ detail: "Not signed in" }, { status: 401 });
