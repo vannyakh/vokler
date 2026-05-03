@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Kantumruy_Pro } from "next/font/google";
 
 import { AppHeader } from "@/components/AppHeader";
 import { SeoJsonLd } from "@/components/SeoJsonLd";
@@ -18,6 +18,14 @@ const fontMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
   weight: ["400", "500"],
+  display: "swap",
+});
+
+/** Kantumruy Pro — Khmer script (Google Fonts: 400–700). */
+const fontKhmer = Kantumruy_Pro({
+  variable: "--font-kantumruy-pro",
+  subsets: ["khmer"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -93,7 +101,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${fontMono.variable} h-full antialiased`}
+      className={`${fontMono.variable} ${fontKhmer.variable} h-full antialiased`}
     >
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />

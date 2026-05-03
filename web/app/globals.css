@@ -88,8 +88,12 @@ body {
   animation: vok-pulse 1.5s ease-in-out infinite;
 }
 
-/* Khmer locale — fall back to system Khmer fonts when lang="km" is set. */
 :lang(km) {
-  font-family: "Noto Sans Khmer", "Leelawadee UI", "Khmer Sangam MN", ui-sans-serif, system-ui,
-    sans-serif;
+  font-family: var(--font-kantumruy-pro), "Kantumruy Pro", "Noto Sans Khmer", ui-sans-serif,
+    system-ui, sans-serif;
+}
+
+html:lang(km) .font-sans {
+  font-family: var(--font-kantumruy-pro), "Kantumruy Pro", "Noto Sans Khmer", ui-sans-serif,
+    system-ui, sans-serif;
 }

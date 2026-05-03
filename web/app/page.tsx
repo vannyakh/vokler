@@ -161,7 +161,7 @@ export default function HomePage() {
   return (
     <div className="mx-auto max-w-[780px] px-5 pb-16">
       <div className="mb-10 text-center">
-        <h1 className="mb-2.5 font-mono text-[clamp(22px,4.2vw,34px)] font-semibold leading-[1.2] tracking-tight">
+        <h1 className="mb-2.5 font-sans text-[clamp(22px,4.2vw,34px)] font-semibold leading-[1.2] tracking-tight">
           {t.heroLine1}{" "}
           <span className="bg-gradient-to-r from-[var(--vok-accent)] to-[var(--vok-accent3)] bg-clip-text text-transparent">
             {t.heroHighlight}
@@ -169,7 +169,7 @@ export default function HomePage() {
           <br />
           {t.heroLine2}
         </h1>
-        <p className="font-mono text-[13px] font-normal sm:text-[14px]" style={{ color: "var(--vok-muted)" }}>
+        <p className="font-sans text-[13px] font-normal leading-relaxed sm:text-[14px]" style={{ color: "var(--vok-muted)" }}>
           {t.heroSub}
         </p>
       </div>
